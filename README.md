@@ -47,7 +47,7 @@ Your corrections:
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
 | **Crash-safe bookkeeping** | Append-only JSONL ledger with `start` and `decision` rows, atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 371 tests (263 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 386 tests (270 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
 
 ## How a run works
 
@@ -90,7 +90,8 @@ Who can influence what:
 | Input | Trusted? | What it can do |
 |---|---|---|
 | `--max-stage` in the crontab/systemd unit | operator | sets the autonomy ceiling |
-| `janitor.toml` | operator (an agent may be able to edit it) | lower the stage, raise the floor, choose per-category actions (never `trash` for personal mail), name the labels (never a system label such as `TRASH` or `SPAM`), set caps up to hard ceilings |
+| `janitor.toml` | operator (an agent may be able to edit it) | lower the stage, raise the floor, choose per-category actions (never `trash` for personal mail), name the labels (never a system label such as `TRASH` or `SPAM`), set caps up to hard ceilings, pick the classifier and model (never where mail or a key is sent) |
+| environment / `--env-file` | operator | the model's endpoint and key, the Gmail token, the state directory |
 | classifier output | untrusted | name one of nine categories, with a confidence |
 | email content | hostile | only what the classifier concludes from it; in the LLM prompt it is fenced as data, never instructions |
 | replies to a digest | the owner, proven by the provider's `SENT` label | undo, keep, never-trash, never-touch, trust, pause, resume |
@@ -264,16 +265,19 @@ problem is reported at once.
 | `[policy]` | below | `category = "keep" \| "label" \| "archive" \| "trash"` |
 | `[labels]` | `Janitor/Invoices`, `Janitor/Receipts`, … | label names per category; never a system label (`INBOX`, `TRASH`, `SPAM`, `CATEGORY_*`, …), in any case |
 | `[[rules]]` | – | operator rules before the built-in ones: `category`, `confidence`, `senders`, `subject_any`, `body_any`, `headers_any`, `attachment_ext_any` |
-| `[classifier]` | `kind = "rules"` | `kind` (`rules`, `llm`, `rules+llm`), `model`, `base_url`, `api_key_env` |
+| `[classifier]` | `kind = "rules"` | `kind` (`rules`, `llm`, `rules+llm`) and `model`; never the endpoint or the key (see below) |
 
 Default policy: invoice, contract and support → **label**; receipt, newsletter and
 notification → **archive**; promotion → **trash**; personal and other → **keep**. Duplicates are
 archived under `Janitor/Duplicates`.
 
 Environment ([`.env.example`](.env.example)): `INBOX_JANITOR_STATE` (default `~/.inbox-janitor`),
-`INBOX_JANITOR_GMAIL_TOKEN`, and the LLM key under the name in `api_key_env` (default
-`INBOX_JANITOR_LLM_KEY`). Secrets never go in the TOML file; a key there is rejected as an
-unknown setting.
+`INBOX_JANITOR_GMAIL_TOKEN`, and for a model `INBOX_JANITOR_LLM_KEY` and `INBOX_JANITOR_LLM_URL`
+(any chat-completions endpoint; default `https://api.openai.com/v1`). The endpoint is a trust
+boundary: it receives message content and the key. So both live in the environment, next to the
+scheduler entry, never in the TOML file an agent may edit (a `base_url` or `api_key_env` there is
+rejected), and the URL must be `https://`, or plain `http://` only to a model on the same machine
+(`localhost`, `127.0.0.1`, `::1`). `check` names the host that would receive message content.
 
 ### Plugging in a classifier
 
@@ -304,9 +308,9 @@ called again until the next run; those messages wait. A runnable version is in
 ## Testing
 
 ```bash
-pytest                           # 371 tests, ~3 s, offline, no keys
+pytest                           # 386 tests, ~3 s, offline, no keys
 ruff check src tests examples tools
-python tools/mutation_check.py   # 25 guards: each one removed must turn its test red
+python tools/mutation_check.py   # 26 guards: each one removed must turn its test red
 ```
 
 [`tests/fakes.py`](tests/fakes.py) builds a `World`: an in-memory mailbox with Gmail's label
@@ -340,7 +344,9 @@ POSIX file-permission tests are skipped.
   digest flags it.
 - **LLM classification sends message content to the model provider** (sender, subject,
   attachment names and up to 3,000 characters of body). For sensitive inboxes, use
-  `kind = "rules"` or point `base_url` at a model you host.
+  `kind = "rules"` or point `INBOX_JANITOR_LLM_URL` at a model you host. Where that content
+  goes, and which secret travels with it, is set only in the environment: the config file can
+  switch the model on (when a key is present) but can't aim it.
 - The owner's own account is trusted: anyone who can send mail *from* the owner's account can
   issue reply commands. Commands can only undo, protect, or pause.
 

@@ -23,6 +23,7 @@ import sys
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .classify.chain import FirstConfident
 from .classify.llm import LLMClassifier, OpenAICompatibleChat
@@ -40,9 +41,13 @@ from .lock import RunLock
 from .mailbox import Mailbox, MailboxError
 from .mailbox.gmail import GmailMailbox, OAuthToken
 from .mailbox.memory import JsonFileMailbox
+from .net import HttpFn, urllib_send
 from .stages import Stage, effective_stage
 
 STAGES = ("trial", "file", "trash")
+LLM_URL, LLM_KEY = "INBOX_JANITOR_LLM_URL", "INBOX_JANITOR_LLM_KEY"
+DEFAULT_LLM_URL = "https://api.openai.com/v1"
+LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 class SetupError(Exception):
@@ -95,16 +100,32 @@ def read_env_file(path: Path | str) -> dict[str, str]:
     return values
 
 
-def build_classifier(config: Config, env: Mapping[str, str]):
+def model_endpoint(env: Mapping[str, str]) -> str:
+    """Where message content (and the key) go when a model classifies. That is a trust
+    boundary, so it is the operator's setting in the environment, never janitor.toml; and it
+    is https, unless the model runs on this machine."""
+    url = env.get(LLM_URL) or DEFAULT_LLM_URL
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+    except ValueError:
+        parts, host = None, ""
+    if parts is not None and host and (parts.scheme == "https"
+                                       or (parts.scheme == "http" and host in LOOPBACK)):
+        return url
+    raise SetupError(f"{LLM_URL} must be an https:// URL (plain http only for a model on "
+                     "this machine: localhost, 127.0.0.1 or ::1)")
+
+
+def build_classifier(config: Config, env: Mapping[str, str], http: HttpFn = urllib_send):
     rules = RuleClassifier((*config.rules, *DEFAULT_RULES))
     if config.classifier.kind == "rules":
         return rules
-    key = env.get(config.classifier.api_key_env, "")
+    key = env.get(LLM_KEY, "")
     if not key:
-        raise SetupError(f"set {config.classifier.api_key_env} to the model API key, or use "
-                         'kind = "rules"')
-    llm = LLMClassifier(OpenAICompatibleChat(base_url=config.classifier.base_url,
-                                             model=config.classifier.model, api_key=key))
+        raise SetupError(f'set {LLM_KEY} to the model API key, or use kind = "rules"')
+    llm = LLMClassifier(OpenAICompatibleChat(base_url=model_endpoint(env), api_key=key,
+                                             model=config.classifier.model, http=http))
     if config.classifier.kind == "llm":
         return llm
     return FirstConfident([rules, llm], accept=config.min_confidence)
@@ -123,15 +144,19 @@ def build_mailbox(spec: str, token: str | None, now: Callable[[], datetime]) -> 
     raise SetupError("--mailbox must be gmail or json:PATH")
 
 
-def describe(config: Config, pinned: Stage) -> list[str]:
+def describe(config: Config, pinned: Stage, env: Mapping[str, str] | None = None) -> list[str]:
     stage = effective_stage(pinned, config.stage)
     asked = f"; the config asks for {config.stage}" if config.stage is not None else ""
+    classifier = config.classifier.kind
+    if "llm" in classifier:                   # who would receive message content
+        host = urlsplit(model_endpoint(env or {})).hostname
+        classifier += f" (model {config.classifier.model} at {host}, set by {LLM_URL})"
     lines = [
         "config: OK",
         f"effective stage: {stage} (pinned by --max-stage {pinned}{asked})",
         f"confidence floor: {config.min_confidence:.2f}",
         f"trash caps: {config.trash_per_run} per run, {config.trash_per_day} per day",
-        f"classifier: {config.classifier.kind}",
+        f"classifier: {classifier}",
         f"trusted senders for spam rescue: {len(config.trusted_senders)}",
         "policy: " + ", ".join(f"{c}={a.value}" for c, a in config.policy.items()),
     ]
@@ -159,7 +184,10 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None,
     except ConfigError as err:
         return fail(str(err), 2)
     if args.cmd == "check":
-        print("\n".join(describe(config, Stage.parse(args.max_stage))))
+        try:
+            print("\n".join(describe(config, Stage.parse(args.max_stage), env)))
+        except SetupError as err:
+            return fail(str(err), 2)
         return 0
     state_dir = Path(args.state_dir or env.get("INBOX_JANITOR_STATE")
                      or "~/.inbox-janitor").expanduser()

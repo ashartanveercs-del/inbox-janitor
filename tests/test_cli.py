@@ -2,9 +2,13 @@ import json
 from datetime import UTC, datetime
 
 import pytest
+from factories import msg
 
+from inbox_janitor.cli import SetupError, build_classifier
 from inbox_janitor.cli import main as cli_main
+from inbox_janitor.config import Config
 from inbox_janitor.lock import RunLock
+from inbox_janitor.net import HttpResponse
 
 OWNER = "owner@harborlane.example.com"
 NOW = datetime(2026, 10, 12, 14, 0, tzinfo=UTC)     # mid-day: "-2h" is always today
@@ -139,6 +143,78 @@ def test_an_llm_classifier_needs_its_key_in_the_environment(env, capsys):
         encoding="utf-8")
     assert run(env, "run", "--max-stage", "trial") == 2
     assert "INBOX_JANITOR_LLM_KEY" in capsys.readouterr().err
+
+
+def test_the_config_cannot_send_mail_or_secrets_somewhere_else(env, capsys):
+    (env["path"] / "janitor.toml").write_text(
+        f'owner = "{OWNER}"\n[classifier]\nkind = "llm"\nmodel = "small-model"\n'
+        'base_url = "http://attacker.invalid/v1"\napi_key_env = "AWS_SECRET_ACCESS_KEY"\n',
+        encoding="utf-8")
+    code = run(env, "run", "--max-stage", "trial",
+               extra_env={"AWS_SECRET_ACCESS_KEY": "s3cr3t", "INBOX_JANITOR_LLM_KEY": "sk-x"})
+    assert code == 2 and sent_subjects(env) == []
+    assert "s3cr3t" not in capsys.readouterr().err
+
+
+class RecordingHttp:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def __call__(self, method, url, *, headers, body, timeout):
+        self.calls.append((url, dict(headers)))
+        reply = {"choices": [{"message": {"content": '{"category": "other", "confidence": 0.2}'}}]}
+        return HttpResponse(200, {}, json.dumps(reply).encode())
+
+
+def llm_config(kind="llm"):
+    return Config.from_dict({"owner": OWNER, "classifier": {"kind": kind,
+                                                            "model": "small-model"}})
+
+
+def test_the_model_endpoint_and_key_come_from_the_environment():
+    http = RecordingHttp()
+    environ = {"INBOX_JANITOR_LLM_URL": "https://llm.example.com/v1",
+               "INBOX_JANITOR_LLM_KEY": "sk-test-not-real", "AWS_SECRET_ACCESS_KEY": "s3cr3t"}
+    build_classifier(llm_config(), environ, http=http).classify(msg(subject="Lunch?"))
+    ((url, headers),) = http.calls
+    assert url == "https://llm.example.com/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer sk-test-not-real"
+
+
+def test_the_default_model_endpoint_is_https():
+    http = RecordingHttp()
+    build_classifier(llm_config("rules+llm"), {"INBOX_JANITOR_LLM_KEY": "sk-test-not-real"},
+                     http=http).classify(msg(subject="Lunch?"))
+    assert http.calls[0][0].startswith("https://")
+
+
+@pytest.mark.parametrize("url", ["http://llm.example.com/v1", "ftp://llm.example.com/v1",
+                                 "llm.example.com/v1", "https:///v1", "http://localhost.example.com",
+                                 "http://[::1"])
+def test_message_content_only_leaves_the_machine_over_https(url):
+    environ = {"INBOX_JANITOR_LLM_URL": url, "INBOX_JANITOR_LLM_KEY": "sk-test-not-real"}
+    with pytest.raises(SetupError, match="INBOX_JANITOR_LLM_URL"):
+        build_classifier(llm_config(), environ, http=RecordingHttp())
+
+
+@pytest.mark.parametrize("url", ["http://localhost:8080/v1", "http://127.0.0.1:11434/v1",
+                                 "http://[::1]:8000/v1"])
+def test_a_model_on_this_machine_may_use_plain_http(url):
+    http = RecordingHttp()
+    environ = {"INBOX_JANITOR_LLM_URL": url, "INBOX_JANITOR_LLM_KEY": "sk-test-not-real"}
+    build_classifier(llm_config(), environ, http=http).classify(msg(subject="Lunch?"))
+    assert http.calls[0][0] == url + "/chat/completions"
+
+
+def test_check_names_the_host_that_would_receive_message_content(env, capsys):
+    (env["path"] / "janitor.toml").write_text(
+        f'owner = "{OWNER}"\n[classifier]\nkind = "rules+llm"\nmodel = "small-model"\n',
+        encoding="utf-8")
+    check = ["--config", env["config"], "check", "--max-stage", "trial"]
+    assert main(check, env={"INBOX_JANITOR_LLM_URL": "https://llm.example.com/v1"}) == 0
+    assert "model small-model at llm.example.com" in capsys.readouterr().out
+    assert main(check, env={"INBOX_JANITOR_LLM_URL": "http://llm.example.com/v1"}) == 2
+    assert "https" in capsys.readouterr().err
 
 
 def test_an_env_file_supplies_settings_and_the_real_environment_wins(env, capsys, tmp_path):

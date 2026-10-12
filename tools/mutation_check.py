@@ -94,6 +94,9 @@ MUTATIONS = [
      "test_janitor_stages.py::test_the_config_cannot_move_the_backlog_line_earlier"),
     (JANITOR, "        if not retry:", "        if True:",
      "test_janitor_replies.py::test_a_reply_that_hit_a_mailbox_error_is_applied_on_a_later_run"),
+    ("src/inbox_janitor/cli.py", 'parts.scheme == "http" and host in LOOPBACK',
+     'parts.scheme == "http"',
+     "test_cli.py::test_message_content_only_leaves_the_machine_over_https"),
 ]
 
 

@@ -46,5 +46,5 @@ senders = ["@pos.example.com"]
 [classifier]
 kind = "rules"            # "rules", "llm" or "rules+llm" (rules first, the model when unsure)
 # model = "your-model-name"
-# base_url = "https://api.openai.com/v1"     # any chat-completions endpoint
-# api_key_env = "INBOX_JANITOR_LLM_KEY"
+# The model's endpoint and key are NOT set here: they receive message content and a secret,
+# so they come from the environment (INBOX_JANITOR_LLM_URL, INBOX_JANITOR_LLM_KEY).

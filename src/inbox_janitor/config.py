@@ -6,7 +6,8 @@ What the config can and can't do is part of the safety model:
   * caps have hard ceilings in code; `personal` mail can never be mapped to `trash`;
   * a label can never be a system label (`TRASH`, `SPAM`, ...): filing must not delete;
   * `trash_after` can only move the trash backlog line later, never earlier;
-  * secrets never live here: the LLM key is read from the environment variable it names.
+  * secrets and destinations never live here: the model's endpoint and key come from the
+    environment, so this file can't send message content or a secret anywhere.
 """
 
 from __future__ import annotations
@@ -65,10 +66,12 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True)
 class ClassifierConfig:
+    """Which classifier, and which model. Where the model lives and its key are not here: the
+    endpoint receives message content and the key, so both come from the operator's
+    environment (INBOX_JANITOR_LLM_URL, INBOX_JANITOR_LLM_KEY), out of an agent's reach."""
+
     kind: str = "rules"
     model: str = ""
-    base_url: str = "https://api.openai.com/v1"
-    api_key_env: str = "INBOX_JANITOR_LLM_KEY"
 
 
 @dataclass(frozen=True)
@@ -275,7 +278,9 @@ class _Parser:
     def _classifier(self) -> None:
         raw = self.data.get("classifier", {})
         if not isinstance(raw, Mapping) or set(raw) - set(ClassifierConfig.__dataclass_fields__):
-            self.errors.append("classifier takes kind, model, base_url and api_key_env")
+            self.errors.append("classifier takes kind and model; the model's endpoint and key "
+                               "come from the environment (INBOX_JANITOR_LLM_URL, "
+                               "INBOX_JANITOR_LLM_KEY), never from this file")
             return
         try:
             c = ClassifierConfig(**{k: str(v) for k, v in raw.items()})

@@ -143,13 +143,21 @@ def test_a_bad_operator_rule_is_an_error():
 
 
 def test_classifier_settings():
-    c = cfg(classifier={"kind": "rules+llm", "model": "small-model",
-                        "base_url": "https://llm.example.com/v1", "api_key_env": "LLM_KEY"})
+    c = cfg(classifier={"kind": "rules+llm", "model": "small-model"})
     assert (c.classifier.kind, c.classifier.model) == ("rules+llm", "small-model")
     with pytest.raises(ConfigError, match="classifier"):
         cfg(classifier={"kind": "crystal-ball"})
     with pytest.raises(ConfigError, match="model"):
         cfg(classifier={"kind": "llm"})
+
+
+@pytest.mark.parametrize(("key", "value"), [("base_url", "http://attacker.invalid/v1"),
+                                            ("api_key_env", "AWS_SECRET_ACCESS_KEY")])
+def test_the_config_cannot_choose_where_mail_goes_or_which_secret_is_sent(key, value):
+    """The endpoint receives message content and the key: both are the operator's, set in the
+    environment. An agent that can edit janitor.toml must not be able to aim them."""
+    with pytest.raises(ConfigError, match="environment"):
+        cfg(classifier={"kind": "llm", "model": "small-model", key: value})
 
 
 def test_every_problem_is_reported_at_once():
