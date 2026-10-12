@@ -29,6 +29,7 @@ API = "https://gmail.googleapis.com/gmail/v1/users/me/"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 BOX_QUERY = {"inbox": "in:inbox", "spam": "in:spam", "sent": "in:sent"}
 ATTEMPTS = 3
+MAX_HTML_CHARS = 200_000     # far more than the classifier reads; bounds the work per message
 
 
 class OAuthToken:
@@ -223,10 +224,49 @@ def _text(part: Mapping[str, Any]) -> str:
         return raw.decode("utf-8", errors="replace")
 
 
+_CODE_TAGS = ("script", "style")            # their content is code, never text
+_LINE_BREAKS = frozenset({"br", "/p", "/div", "/li", "/tr"})
+
+
+def _tag_name(low: str, start: int, end: int) -> str:
+    """'p' for <p ...>, '/p' for </p>, '' for a comment or anything else."""
+    closing = start < end and low[start] == "/"
+    i = j = start + closing
+    while j < end and low[j].isalnum():
+        j += 1
+    name = low[i:j]
+    return ("/" + name if closing else name) if name else ""
+
+
 def html_to_text(markup: str) -> str:
-    text = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", markup)
-    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</li>|</tr>", "\n", text)
-    return html.unescape(re.sub(r"<[^>]+>", " ", text)).strip()
+    """The text of an HTML body, in one left-to-right pass over at most MAX_HTML_CHARS.
+
+    A stranger writes this markup and every message is read, so nothing here may backtrack:
+    a pattern like `<script.*?</script>` or `<[^>]+>` takes quadratic time on thousands of
+    unclosed openers. Each search below starts where the last one ended, and a code tag with
+    no closing tag left in the document is never searched for again."""
+    src = markup[:MAX_HTML_CHARS]
+    low = src.lower()
+    out: list[str] = []
+    unclosed: set[str] = set()
+    pos = 0
+    while (lt := src.find("<", pos)) >= 0:
+        gt = src.find(">", lt + 1)
+        if gt < 0:                              # no tag can end: the rest is text
+            break
+        out.append(src[pos:lt])
+        name = _tag_name(low, lt + 1, gt)
+        pos = gt + 1
+        if name in _CODE_TAGS and name not in unclosed:
+            end = low.find("</" + name, pos)
+            if end < 0:
+                unclosed.add(name)              # its text stays, like the tag was plain
+            else:
+                close = low.find(">", end)
+                pos = len(src) if close < 0 else close + 1
+        out.append("\n" if name in _LINE_BREAKS else " ")
+    out.append(src[pos:])
+    return html.unescape("".join(out)).strip()
 
 
 def parse_message(data: Mapping[str, Any], label_names: Mapping[str, str]) -> Message:

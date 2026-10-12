@@ -97,6 +97,8 @@ MUTATIONS = [
     ("src/inbox_janitor/cli.py", 'parts.scheme == "http" and host in LOOPBACK',
      'parts.scheme == "http"',
      "test_cli.py::test_message_content_only_leaves_the_machine_over_https"),
+    ("src/inbox_janitor/mailbox/gmail.py", "src = markup[:MAX_HTML_CHARS]", "src = markup",
+     "test_gmail.py::test_only_the_start_of_a_huge_html_body_is_read"),
 ]
 
 

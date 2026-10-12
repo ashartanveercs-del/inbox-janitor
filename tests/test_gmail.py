@@ -3,13 +3,20 @@
 import base64
 import email
 import json
+import time
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 from inbox_janitor.mailbox import MailboxError, NotFound, Outgoing
-from inbox_janitor.mailbox.gmail import GmailMailbox, OAuthToken, parse_message
+from inbox_janitor.mailbox.gmail import (
+    MAX_HTML_CHARS,
+    GmailMailbox,
+    OAuthToken,
+    html_to_text,
+    parse_message,
+)
 from inbox_janitor.net import HttpResponse
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me/"
@@ -222,6 +229,38 @@ def test_an_html_only_body_is_reduced_to_text():
     body = gmail(google).fetch("18c2f0a1").body
     assert "x()" not in body and "p{}" not in body
     assert body.split() == ["Hello", "there", "Bye"]
+
+
+@pytest.mark.parametrize(("markup", "text"), [
+    ("<p>One</p><p>Two</p>", "One\n Two"),
+    ("<SCRIPT type='x'>if (a > b) run()</SCRIPT>Shown", "Shown"),
+    ("<style >p > a {}</style >Kept<script>x()</script>", "Kept"),
+    ("a<br/>b<BR>c<br />d", "a\nb\nc\nd"),
+    ("<div>x</div><li>y</li><tr>z</tr>", "x\n y\n z"),
+    ("Tom &amp; Jerry &lt;3", "Tom & Jerry <3"),
+    ("an <script>unclosed opener keeps its text", "an  unclosed opener keeps its text"),
+    ("1 < 2, no tag closes here", "1 < 2, no tag closes here"),
+    ('<a title="x>y">link</a>', 'y">link'),
+])
+def test_html_is_reduced_to_its_text(markup, text):
+    assert html_to_text(markup) == text
+
+
+@pytest.mark.parametrize("markup", ["<script" * 15_000, "<style>" * 15_000, "<" * 100_000,
+                                    "<p" * 50_000, "<script>" + "<" * 100_000],
+                         ids=["script-openers", "style-openers", "bare-lt", "open-tags",
+                              "unclosed-script"])
+def test_html_from_a_stranger_is_reduced_in_linear_time(markup):
+    """Any sender can make the body HTML-only, and every inbox and spam message is read: a
+    pattern that backtracks (thousands of unclosed openers) would hang the run."""
+    started = time.perf_counter()
+    html_to_text(markup)
+    assert time.perf_counter() - started < 1.0
+
+
+def test_only_the_start_of_a_huge_html_body_is_read():
+    markup = "<p>" + "word " * 100_000 + "</p>"
+    assert len(html_to_text(markup)) <= MAX_HTML_CHARS
 
 
 @pytest.mark.parametrize("charset", ["undefined", "idna", "no-such-charset"])

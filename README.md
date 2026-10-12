@@ -47,7 +47,7 @@ Your corrections:
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
 | **Crash-safe bookkeeping** | Append-only JSONL ledger with `start` and `decision` rows, atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 386 tests (270 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 401 tests (273 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
 
 ## How a run works
 
@@ -175,7 +175,10 @@ Errors are recorded by exception type only. Spam gets the same accounting, and n
 stranger's mail lands there by default, and it is read before the inbox. Spam that stays where
 it is writes nothing to the ledger (most of it is read again every run), so the message being
 read is noted in the state file instead, and a run that dies reading it blames it. Three spam
-failures in a row stop the spam check, not triage.
+failures in a row stop the spam check, not triage. Reading itself can't be made to hang: an
+HTML body is reduced to text in one pass over at most 200,000 characters, with no pattern that
+backtracks (a regex like `<script.*?</script>` takes quadratic time on thousands of unclosed
+openers), and a charset Python refuses to decode with falls back to UTF-8.
 
 ## Quick start
 
@@ -308,9 +311,9 @@ called again until the next run; those messages wait. A runnable version is in
 ## Testing
 
 ```bash
-pytest                           # 386 tests, ~3 s, offline, no keys
+pytest                           # 401 tests, ~3 s, offline, no keys
 ruff check src tests examples tools
-python tools/mutation_check.py   # 26 guards: each one removed must turn its test red
+python tools/mutation_check.py   # 27 guards: each one removed must turn its test red
 ```
 
 [`tests/fakes.py`](tests/fakes.py) builds a `World`: an in-memory mailbox with Gmail's label
