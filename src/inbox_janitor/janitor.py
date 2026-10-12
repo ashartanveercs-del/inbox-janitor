@@ -366,10 +366,13 @@ class Janitor:
             self.state.setdefault("trash_since", self._today().isoformat())
 
     def _trash_since(self) -> date | None:
-        if self.config.trash_after is not None:
-            return self.config.trash_after
+        """The backlog line: the day trash was (last) switched on. `trash_after` can move it
+        later, never earlier - an early date would wave the whole lookback window through."""
         since = self.state.get("trash_since")
-        return date.fromisoformat(since) if since else None
+        if not since:
+            return None
+        line, after = date.fromisoformat(since), self.config.trash_after
+        return line if after is None else max(line, after)
 
     # -- the trash backlog ----------------------------------------------------------------------
 

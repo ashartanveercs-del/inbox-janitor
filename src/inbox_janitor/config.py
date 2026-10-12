@@ -5,6 +5,7 @@ What the config can and can't do is part of the safety model:
   * `min_confidence` can only *raise* the 0.95 floor (lower values are clamped, with a warning);
   * caps have hard ceilings in code; `personal` mail can never be mapped to `trash`;
   * a label can never be a system label (`TRASH`, `SPAM`, ...): filing must not delete;
+  * `trash_after` can only move the trash backlog line later, never earlier;
   * secrets never live here: the LLM key is read from the environment variable it names.
 """
 

@@ -47,7 +47,7 @@ Your corrections:
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
 | **Crash-safe bookkeeping** | Append-only JSONL ledger with `start` and `decision` rows, atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 367 tests (259 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 369 tests (261 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
 
 ## How a run works
 
@@ -124,7 +124,8 @@ supplier's *compromised* account passes, which is why the list should stay short
 
 **3. Promoting to `trash` must not mass-delete history.** Everything the trial suggested
 trashing becomes eligible the moment trash is switched on. So auto-trash only covers mail that
-arrived on or after the day trashing was (last) enabled. Older candidates become a backlog
+arrived on or after the day trashing was (last) enabled; `trash_after` in the config can move
+that line later, never earlier. Older candidates become a backlog
 that `trash-backlog --approve N` clears only when N equals the number actually waiting. Each
 message is re-checked first (still in the inbox, not starred since, no new never-trash rule),
 and the caps still apply. Dropping below `trash` resets the line.
@@ -253,7 +254,7 @@ problem is reported at once.
 | `min_confidence` | `0.95` | can be raised; lower values are clamped up, with a warning |
 | `lookback_days` | `30` | how far back each run looks |
 | `trash_per_run` / `trash_per_day` | `20` / `50` | hard ceilings 200 / 500 |
-| `trash_after` | – | a fixed backlog line; by default it is the day trash was switched on |
+| `trash_after` | – | moves the backlog line *later* than the day trash was switched on; an earlier date is ignored |
 | `wait_days` | `3` | an unreachable classifier: wait this long, then report for review |
 | `keep_days` | `180` | ledger retention; must exceed `lookback_days` |
 | `timezone` | `UTC` | what "today" means for caps, the backlog line and the digest |
@@ -301,9 +302,9 @@ called again until the next run; those messages wait. A runnable version is in
 ## Testing
 
 ```bash
-pytest                           # 367 tests, ~3 s, offline, no keys
+pytest                           # 369 tests, ~3 s, offline, no keys
 ruff check src tests examples tools
-python tools/mutation_check.py   # 23 guards: each one removed must turn its test red
+python tools/mutation_check.py   # 24 guards: each one removed must turn its test red
 ```
 
 [`tests/fakes.py`](tests/fakes.py) builds a `World`: an in-memory mailbox with Gmail's label
@@ -321,8 +322,9 @@ POSIX file-permission tests are skipped.
 - **Keep `--max-stage` where the agent can't write.** Whoever controls the scheduler entry
   controls the janitor. The config file is assumed editable by a co-located agent, which is why
   it can only lower the stage and raise the floor, why personal mail can't be mapped to trash,
-  and why a label can't be a system label: `labels.invoice = "TRASH"` would turn filing into
-  deleting. The janitor also refuses such a change itself, however the config was built.
+  why `trash_after` can only hold more of the backlog back, and why a label can't be a system
+  label: `labels.invoice = "TRASH"` would turn filing into deleting. The janitor also refuses
+  such a change itself, however the config was built.
 - **On disk** (in the state directory): `ledger.jsonl` (provider message ids, ticket numbers,
   keyed fingerprints, categories, confidences, outcome codes, label names, receipt times),
   `state.json` (counters, run ids, the digests' Message-IDs), `rules.json` (hashed patterns),

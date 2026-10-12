@@ -89,6 +89,9 @@ MUTATIONS = [
     (JANITOR, "if any(is_system_label(lb) and lb != INBOX for lb in adding):", "if False:",
      "test_janitor_stages.py::"
      "test_filing_never_adds_trash_or_spam_even_from_a_config_built_around_the_parser"),
+    (JANITOR, "return line if after is None else max(line, after)",
+     "return line if after is None else after",
+     "test_janitor_stages.py::test_the_config_cannot_move_the_backlog_line_earlier"),
 ]
 
 

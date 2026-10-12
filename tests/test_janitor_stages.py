@@ -201,6 +201,23 @@ def test_mail_from_before_trash_was_enabled_waits_for_an_exact_approval(tmp_path
     assert all("TRASH" in w.labels(m) for m in old)
 
 
+def test_the_config_cannot_move_the_backlog_line_earlier(tmp_path):
+    """`trash_after = 2000-01-01` would otherwise wave the whole lookback window through to the
+    trash without the operator's counted approval."""
+    old = promotion(age_days=20)
+    w = World(tmp_path, old, stage=Stage.TRASH, config={"trash_after": "2000-01-01"})
+    report = w.run()
+    assert w.changes() == []
+    assert outcomes(report)[old.ref] == ("backlog", Action.TRASH)
+
+
+def test_the_config_can_move_the_backlog_line_later(tmp_path):
+    fresh = promotion()                               # arrived today
+    w = World(tmp_path, fresh, stage=Stage.TRASH, config={"trash_after": "2026-10-14"})
+    report = w.run()
+    assert w.changes() == [] and outcomes(report)[fresh.ref] == ("backlog", Action.TRASH)
+
+
 def test_backlog_approval_respects_the_cap_and_rechecks_each_message(tmp_path):
     old = [promotion(subject=f"Old sale {n}", body=f"Old offer {n}, long gone.", age_days=3)
            for n in range(4)]
