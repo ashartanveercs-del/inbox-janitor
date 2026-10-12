@@ -21,14 +21,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from ..models import Attachment, Message
+from ..models import SYSTEM_LABELS, Attachment, Message
 from ..net import HttpFn, urllib_send
 from . import MailboxError, NotFound, Outgoing
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me/"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
-SYSTEM_LABELS = frozenset({"INBOX", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT", "SENT",
-                           "DRAFT"})
 BOX_QUERY = {"inbox": "in:inbox", "spam": "in:spam", "sent": "in:sent"}
 ATTEMPTS = 3
 

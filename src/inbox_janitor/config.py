@@ -4,6 +4,7 @@ What the config can and can't do is part of the safety model:
   * `stage` can only *lower* the `--max-stage` pin given on the command line;
   * `min_confidence` can only *raise* the 0.95 floor (lower values are clamped, with a warning);
   * caps have hard ceilings in code; `personal` mail can never be mapped to `trash`;
+  * a label can never be a system label (`TRASH`, `SPAM`, ...): filing must not delete;
   * secrets never live here: the LLM key is read from the environment variable it names.
 """
 
@@ -22,6 +23,7 @@ from zoneinfo import ZoneInfo
 from .addresses import is_sender_pattern
 from .classify import CATEGORIES
 from .classify.rules import Rule
+from .models import is_system_label
 from .stages import Action, Stage
 
 CONFIDENCE_FLOOR = 0.95
@@ -238,6 +240,9 @@ class _Parser:
         for category, name in raw.items():
             if category not in CATEGORIES or not isinstance(name, str) or not name.strip():
                 self.errors.append(f"labels: bad entry {category!r}")
+            elif is_system_label(name):
+                self.errors.append(f"labels.{category}: {name.strip()!r} is a system label; "
+                                   "filing only adds labels of its own")
             else:
                 labels[category] = name.strip()
         self.out["labels"] = MappingProxyType(labels)

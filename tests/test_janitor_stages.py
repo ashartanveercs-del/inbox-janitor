@@ -1,10 +1,13 @@
 import json
+from dataclasses import replace
+from types import MappingProxyType
 
 import pytest
 from factories import OWNER, invoice, msg, newsletter, promotion
 from fakes import ScriptedClassifier, World, auth_ok
 
 from inbox_janitor.classify.llm import LLMClassifier
+from inbox_janitor.config import DEFAULT_LABELS
 from inbox_janitor.janitor import BacklogMismatch, StageTooLow
 from inbox_janitor.models import Classification
 from inbox_janitor.stages import Action, Stage
@@ -132,6 +135,20 @@ def test_exempt_mail_is_never_classified_or_touched(tmp_path):
     w = World(tmp_path, mine, starred, stage=Stage.TRASH, classifier=classifier)
     w.run()
     assert classifier.asked == [] and w.changes() == []
+
+
+def test_filing_never_adds_trash_or_spam_even_from_a_config_built_around_the_parser(tmp_path):
+    """Belt and braces: the parser refuses system labels, and the janitor itself refuses a
+    filing change that would add one, whoever built the Config."""
+    bill = invoice()
+    slip = msg(subject="Your receipt from Corner Market", sender="receipts@market.example.com")
+    w = World(tmp_path, bill, slip, stage=Stage.FILE)
+    w.config = replace(w.config, labels=MappingProxyType(
+        {**DEFAULT_LABELS, "invoice": "TRASH", "receipt": "Spam"}))
+    report = w.run()
+    assert w.changes() == []
+    assert w.labels(bill) == {"INBOX", "UNREAD"} and w.labels(slip) == {"INBOX", "UNREAD"}
+    assert "error" in report.problems
 
 
 def test_a_duplicate_is_archived_under_its_own_label(tmp_path):

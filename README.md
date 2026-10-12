@@ -47,7 +47,7 @@ Your corrections:
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
 | **Crash-safe bookkeeping** | Append-only JSONL ledger with `start` and `decision` rows, atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 351 tests (255 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 367 tests (259 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
 
 ## How a run works
 
@@ -90,7 +90,7 @@ Who can influence what:
 | Input | Trusted? | What it can do |
 |---|---|---|
 | `--max-stage` in the crontab/systemd unit | operator | sets the autonomy ceiling |
-| `janitor.toml` | operator (an agent may be able to edit it) | lower the stage, raise the floor, choose per-category actions (never `trash` for personal mail), set caps up to hard ceilings |
+| `janitor.toml` | operator (an agent may be able to edit it) | lower the stage, raise the floor, choose per-category actions (never `trash` for personal mail), name the labels (never a system label such as `TRASH` or `SPAM`), set caps up to hard ceilings |
 | classifier output | untrusted | name one of nine categories, with a confidence |
 | email content | hostile | only what the classifier concludes from it; in the LLM prompt it is fenced as data, never instructions |
 | replies to a digest | the owner, proven by the provider's `SENT` label | undo, keep, never-trash, never-touch, trust, pause, resume |
@@ -259,7 +259,7 @@ problem is reported at once.
 | `timezone` | `UTC` | what "today" means for caps, the backlog line and the digest |
 | `trusted_senders` | `[]` | addresses or `@domains` eligible for spam rescue |
 | `[policy]` | below | `category = "keep" \| "label" \| "archive" \| "trash"` |
-| `[labels]` | `Janitor/Invoices`, `Janitor/Receipts`, … | label names per category |
+| `[labels]` | `Janitor/Invoices`, `Janitor/Receipts`, … | label names per category; never a system label (`INBOX`, `TRASH`, `SPAM`, `CATEGORY_*`, …), in any case |
 | `[[rules]]` | – | operator rules before the built-in ones: `category`, `confidence`, `senders`, `subject_any`, `body_any`, `headers_any`, `attachment_ext_any` |
 | `[classifier]` | `kind = "rules"` | `kind` (`rules`, `llm`, `rules+llm`), `model`, `base_url`, `api_key_env` |
 
@@ -301,9 +301,9 @@ called again until the next run; those messages wait. A runnable version is in
 ## Testing
 
 ```bash
-pytest                           # 351 tests, ~3 s, offline, no keys
+pytest                           # 367 tests, ~3 s, offline, no keys
 ruff check src tests examples tools
-python tools/mutation_check.py   # 21 guards: each one removed must turn its test red
+python tools/mutation_check.py   # 23 guards: each one removed must turn its test red
 ```
 
 [`tests/fakes.py`](tests/fakes.py) builds a `World`: an in-memory mailbox with Gmail's label
@@ -320,8 +320,9 @@ POSIX file-permission tests are skipped.
   delete, and trashed mail stays recoverable for about 30 days.
 - **Keep `--max-stage` where the agent can't write.** Whoever controls the scheduler entry
   controls the janitor. The config file is assumed editable by a co-located agent, which is why
-  it can only lower the stage and raise the floor, and why personal mail can't be mapped to
-  trash.
+  it can only lower the stage and raise the floor, why personal mail can't be mapped to trash,
+  and why a label can't be a system label: `labels.invoice = "TRASH"` would turn filing into
+  deleting. The janitor also refuses such a change itself, however the config was built.
 - **On disk** (in the state directory): `ledger.jsonl` (provider message ids, ticket numbers,
   keyed fingerprints, categories, confidences, outcome codes, label names, receipt times),
   `state.json` (counters, run ids, the digests' Message-IDs), `rules.json` (hashed patterns),

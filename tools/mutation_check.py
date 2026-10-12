@@ -84,6 +84,11 @@ MUTATIONS = [
     (JANITOR, "        if died_on:", "        if False:",
      "test_janitor_robustness.py::"
      "test_a_spam_message_that_kills_the_process_cannot_block_every_later_run"),
+    ("src/inbox_janitor/config.py", "elif is_system_label(name):", "elif False:",
+     "test_config.py::test_a_label_can_never_be_a_system_label"),
+    (JANITOR, "if any(is_system_label(lb) and lb != INBOX for lb in adding):", "if False:",
+     "test_janitor_stages.py::"
+     "test_filing_never_adds_trash_or_spam_even_from_a_config_built_around_the_parser"),
 ]
 
 

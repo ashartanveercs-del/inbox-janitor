@@ -158,6 +158,16 @@ def test_gmail_needs_a_token_file(env, capsys):
     assert code == 2 and "--gmail-token" in capsys.readouterr().err
 
 
+def test_a_config_that_files_mail_into_trash_or_spam_is_refused(env, capsys):
+    (env["path"] / "janitor.toml").write_text(
+        f'owner = "{OWNER}"\n[labels]\ninvoice = "TRASH"\nreceipt = "SPAM"\n', encoding="utf-8")
+    assert main(["--config", env["config"], "check", "--max-stage", "file"], env={}) == 2
+    assert run(env, "run", "--max-stage", "file") == 2
+    err = capsys.readouterr().err
+    assert "labels.invoice" in err and "labels.receipt" in err and "system label" in err
+    assert labels(env, "m3") == {"INBOX"} and sent_subjects(env) == []
+
+
 def test_check_explains_the_effective_settings(env, capsys):
     (env["path"] / "janitor.toml").write_text(
         f'owner = "{OWNER}"\nstage = "trash"\nmin_confidence = 0.5\n', encoding="utf-8")

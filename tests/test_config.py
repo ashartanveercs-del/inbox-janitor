@@ -111,6 +111,20 @@ def test_an_unknown_timezone_is_an_error():
         cfg(timezone="Mars/Olympus_Mons")
 
 
+@pytest.mark.parametrize("name", ["TRASH", "SPAM", "Spam", " trash ", "INBOX", "UNREAD",
+                                  "STARRED", "IMPORTANT", "SENT", "DRAFT", "CHAT",
+                                  "CATEGORY_PROMOTIONS", "category_social"])
+def test_a_label_can_never_be_a_system_label(name):
+    """A label is something filing adds. 'TRASH' or 'SPAM' would turn filing (stage file)
+    into deleting, past the trash caps and the backlog approval."""
+    with pytest.raises(ConfigError, match="system label"):
+        cfg(labels={"invoice": name})
+
+
+def test_ordinary_label_names_are_accepted():
+    assert cfg(labels={"invoice": "Bills/Trash-day"}).label_for("invoice") == "Bills/Trash-day"
+
+
 def test_trusted_senders_must_be_addresses_or_domains():
     assert cfg(trusted_senders=["billing@flour.example.com", "@bank.example.com"]) \
         .trusted_senders == ("billing@flour.example.com", "@bank.example.com")

@@ -8,8 +8,18 @@ from datetime import UTC, datetime
 
 # System labels shared by the adapters (Gmail's own ids; the in-memory mailbox uses the same).
 INBOX, SPAM, TRASH, SENT, STARRED, UNREAD = "INBOX", "SPAM", "TRASH", "SENT", "STARRED", "UNREAD"
+SYSTEM_LABELS = frozenset({INBOX, SPAM, TRASH, SENT, STARRED, UNREAD, "IMPORTANT", "DRAFT",
+                           "CHAT"})
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def is_system_label(name: str) -> bool:
+    """The provider's own labels, in any case (Gmail reserves them case-insensitively),
+    including the inbox tabs (CATEGORY_*). Filing may never add one: "TRASH" or "SPAM" would
+    turn filing into deleting."""
+    upper = name.strip().upper()
+    return upper in SYSTEM_LABELS or upper.startswith("CATEGORY_")
 
 
 @dataclass(frozen=True)

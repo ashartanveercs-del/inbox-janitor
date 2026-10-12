@@ -28,7 +28,7 @@ from .config import Config
 from .dedupe import DuplicateIndex, fingerprints
 from .digest import compose
 from .mailbox import Mailbox, MailboxError, NotFound, Outgoing
-from .models import INBOX, SENT, SPAM, Message
+from .models import INBOX, SENT, SPAM, Message, is_system_label
 from .policy import Verdict, decide, duplicate_verdict, exemption, gate
 from .privacy import Fingerprinter, load_or_create_key
 from .report import Item, RunReport
@@ -56,6 +56,10 @@ class BacklogMismatch(Exception):
 
 class StageTooLow(Exception):
     """The effective stage doesn't permit this; only the operator's pin can raise it."""
+
+
+class UnsafeChange(Exception):
+    """A change outside what filing may do. Refused whatever asked for it."""
 
 
 class Janitor:
@@ -329,9 +333,13 @@ class Janitor:
 
     def _change(self, m: Message, add: list[str], remove: list[str] = ()) -> list[list[str]]:
         """One modify call with only the labels that actually change, recorded as ops, so an
-        undo restores exactly the state before (a label the owner had already set stays)."""
+        undo restores exactly the state before (a label the owner had already set stays).
+        Filing adds labels of its own, plus INBOX for a rescue - never another system label:
+        TRASH or SPAM here would be deleting by another name, past the caps and the backlog."""
         adding = tuple(lb for lb in add if lb and lb not in m.labels)
         removing = tuple(lb for lb in remove if lb in m.labels)
+        if any(is_system_label(lb) and lb != INBOX for lb in adding):
+            raise UnsafeChange("a filing change may not add a system label")
         if adding or removing:
             self.mailbox.modify(m.ref, add=adding, remove=removing)
         return [["label", lb] for lb in adding] + [["unlabel", lb] for lb in removing]
