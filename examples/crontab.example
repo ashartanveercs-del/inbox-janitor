@@ -1,0 +1,10 @@
+# inbox-janitor schedule. The --max-stage flag here IS the permission model: keep this file
+# where the agent (and anything it runs) can't write. janitor.toml can only lower the stage.
+#
+# Week 1-2: trial (suggest only; rescues trusted mail from Spam). Read the digests.
+# Then raise to file, and later to trash, by editing THIS line - nothing else can.
+
+15 7 * * *  /opt/inbox-janitor/.venv/bin/inbox-janitor --config /etc/inbox-janitor/janitor.toml --env-file /etc/inbox-janitor/env run --max-stage trial
+
+# When trash is on, older trash candidates wait for an explicit, counted approval:
+#   inbox-janitor --config ... trash-backlog --approve <N from the digest> --max-stage trash

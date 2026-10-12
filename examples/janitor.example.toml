@@ -1,0 +1,50 @@
+# inbox-janitor operator config for a fictional small business (Harbor Lane Bakery).
+# Copy to janitor.toml and edit. Nothing secret belongs here: the LLM key and the Gmail token
+# come from the environment (see .env.example).
+
+owner = "owner@harborlane.example.com"   # the run refuses any other mailbox account
+
+# The autonomy ceiling is --max-stage on the command line (put it in the crontab or systemd
+# unit, where the agent can't edit it). This setting can only LOWER it - for example to hold a
+# mailbox at "file" without touching the scheduler.
+# stage = "file"
+
+min_confidence = 0.95     # can be raised; anything below 0.95 is clamped back up
+lookback_days = 30        # how far back each run looks
+trash_per_run = 20        # hard ceilings in code: 200 per run, 500 per day
+trash_per_day = 50
+wait_days = 3             # an unreachable classifier: wait this long, then report for review
+keep_days = 180           # ledger retention; must be longer than lookback_days
+timezone = "America/New_York"
+
+# Spam rescue: mail from these senders is moved back to the inbox - only when the receiving
+# server's DMARC or aligned-DKIM verdict says it really came from them.
+trusted_senders = ["@flour.example.com", "@bank.example.com"]
+
+# What each category may do: keep, label, archive or trash. Personal mail can't be trashed.
+[policy]
+invoice = "label"
+receipt = "archive"
+contract = "label"
+support = "label"
+newsletter = "archive"
+promotion = "trash"
+notification = "archive"
+personal = "keep"
+other = "keep"
+
+[labels]
+newsletter = "Janitor/Newsletters"
+
+# Operator rules run before the built-in ones. Precision over recall: a rule that is wrong
+# acts at full confidence.
+[[rules]]
+category = "receipt"
+confidence = 0.99
+senders = ["@pos.example.com"]
+
+[classifier]
+kind = "rules"            # "rules", "llm" or "rules+llm" (rules first, the model when unsure)
+# model = "your-model-name"
+# base_url = "https://api.openai.com/v1"     # any chat-completions endpoint
+# api_key_env = "INBOX_JANITOR_LLM_KEY"
