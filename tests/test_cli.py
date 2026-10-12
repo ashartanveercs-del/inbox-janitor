@@ -171,6 +171,14 @@ def llm_config(kind="llm"):
                                                             "model": "small-model"}})
 
 
+def test_the_rules_know_the_owners_own_domain():
+    """The owner's colleagues' list mail (a team Google Group) is never bulk mail."""
+    rules = build_classifier(Config.from_dict({"owner": OWNER}), {})
+    sheet = msg(sender="team@harborlane.example.com", subject="Weekly order sheet",
+                headers={"List-Id": "<orders.harborlane.example.com>"})
+    assert rules.classify(sheet).category not in ("promotion", "newsletter")
+
+
 def test_the_model_endpoint_and_key_come_from_the_environment():
     http = RecordingHttp()
     environ = {"INBOX_JANITOR_LLM_URL": "https://llm.example.com/v1",

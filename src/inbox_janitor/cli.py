@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .addresses import domain_of
 from .classify.chain import FirstConfident
 from .classify.llm import LLMClassifier, OpenAICompatibleChat
 from .classify.rules import DEFAULT_RULES, RuleClassifier
@@ -118,7 +119,7 @@ def model_endpoint(env: Mapping[str, str]) -> str:
 
 
 def build_classifier(config: Config, env: Mapping[str, str], http: HttpFn = urllib_send):
-    rules = RuleClassifier((*config.rules, *DEFAULT_RULES))
+    rules = RuleClassifier((*config.rules, *DEFAULT_RULES), own_domains=(domain_of(config.owner),))
     if config.classifier.kind == "rules":
         return rules
     key = env.get(LLM_KEY, "")

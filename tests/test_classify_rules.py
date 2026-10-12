@@ -43,6 +43,71 @@ def test_a_promotion_needs_bulk_headers_not_just_a_salesy_subject():
     assert RuleClassifier().classify(personal).category != "promotion"
 
 
+GROUP = {"List-Id": "Orders <orders.harborlane.example.com>",
+         "List-Post": "<mailto:orders@harborlane.example.com>",
+         "List-Unsubscribe": "<mailto:orders+unsubscribe@harborlane.example.com>"}
+BULKY = ("promotion", "newsletter")
+
+
+def test_a_reply_in_a_list_thread_is_not_bulk_mail():
+    """Google Groups and the like put list headers on every post, business threads included:
+    this is a colleague, not a sale."""
+    thread = msg(sender="team@harborlane.example.com",
+                 subject="Re: deal with the cafe on the wholesale order",
+                 headers={"List-Id": "<orders.harborlane.example.com>"})
+    assert RuleClassifier().classify(thread).category not in BULKY
+
+
+def test_a_list_anyone_can_post_to_is_a_discussion_not_bulk_mail():
+    post = msg(sender="baker@coop.example.com", subject="Anyone have a deal on rye flour?",
+               headers={**GROUP, "List-Id": "<bakers.coop.example.com>",
+                        "List-Post": "<mailto:bakers@coop.example.com>"})
+    assert RuleClassifier().classify(post).category not in BULKY
+
+
+def test_an_announcement_list_is_still_bulk_mail():
+    """RFC 2369: `List-Post: NO` means nobody can post - a one-way list."""
+    sale = promotion(headers={"List-Unsubscribe": "<https://ovens.example.com/unsub>",
+                              "List-Post": "NO (posting not allowed on this list)"})
+    assert RuleClassifier().classify(sale).category == "promotion"
+
+
+def test_list_mail_from_or_about_the_owners_own_domain_is_never_bulk():
+    rules = RuleClassifier(own_domains=("harborlane.example.com",))
+    sheet = msg(sender="team@harborlane.example.com", subject="Weekly order sheet",
+                headers={"List-Id": "<orders.harborlane.example.com>"})
+    relayed = msg(sender="noreply@lists.example.com", subject="Weekly order sheet",
+                  headers={"List-Id": "<orders.harborlane.example.com>"})
+    assert rules.classify(sheet).category not in BULKY
+    assert rules.classify(relayed).category not in BULKY
+    assert RuleClassifier().classify(sheet).category == "newsletter"     # without the owner
+
+
+@pytest.mark.parametrize("message", [
+    msg(sender="customer@homemail.example.com", subject="Re: your order for Saturday",
+        in_reply_to="<o-311@harborlane.example.com>"),
+    msg(sender="customer@homemail.example.com", subject="Can I get a receipt for my order?"),
+], ids=["reply", "question"])
+def test_a_reply_or_a_question_is_never_a_receipt(message):
+    """A receipt is archived: a customer writing about an order must stay in the inbox."""
+    assert RuleClassifier().classify(message).category != "receipt"
+
+
+@pytest.mark.parametrize("subject", ["Your receipt from Corner Market", "Thanks for your order!",
+                                     "Order confirmation #5512"])
+def test_receipts_are_still_receipts(subject):
+    assert RuleClassifier().classify(msg(subject=subject)).category == "receipt"
+
+
+@pytest.mark.parametrize("subject", ["Market news: the fall bake sale is back",
+                                     "Point of sale tips for the holiday rush"])
+def test_the_word_sale_alone_is_not_a_reason_to_trash(subject):
+    """Trash rests on unambiguous offers ('% off', 'coupon', ...), not on a word that also
+    means a bake sale or a point-of-sale system."""
+    got = RuleClassifier().classify(newsletter(subject=subject))
+    assert got.category == "newsletter"
+
+
 def test_operator_rules_go_first():
     rules = [Rule(category="receipt", confidence=0.99, senders=("@pos.example.com",)),
              *DEFAULT_RULES]

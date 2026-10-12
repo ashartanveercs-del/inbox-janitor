@@ -91,7 +91,8 @@ class World:
         self.state_dir = tmp_path / "state"
         self.config = Config.from_dict({"owner": OWNER, **(config or {})})
         self.stage = stage
-        self.classifier = classifier or RuleClassifier()
+        # like the command line: the owner's own domain is never bulk mail
+        self.classifier = classifier or RuleClassifier(own_domains=(OWNER.split("@")[1],))
 
     def janitor(self, stage: Stage | None = None, classifier=None) -> Janitor:
         return Janitor(mailbox=self.mailbox, classifier=classifier or self.classifier,

@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 JANITOR = "src/inbox_janitor/janitor.py"
+RULES = "src/inbox_janitor/classify/rules.py"
 
 # (file, original text, broken text, the test that must fail)
 MUTATIONS = [
@@ -125,6 +126,18 @@ MUTATIONS = [
     ("src/inbox_janitor/commands.py", "run = ctx.ledger.last_acting_run()",
      'run = ctx.state.get("last_acting_run")',
      "test_janitor_robustness.py::test_undo_last_reaches_a_change_made_just_before_a_crash"),
+    (RULES, 'if post and not post.startswith("no"):', "if False:",
+     "test_classify_rules.py::test_a_list_anyone_can_post_to_is_a_discussion_not_bulk_mail"),
+    (RULES, "    if is_reply(m):\n        return False\n    list_id",
+     "    if False:\n        return False\n    list_id",
+     "test_classify_rules.py::test_a_reply_in_a_list_thread_is_not_bulk_mail"),
+    (RULES, "return not (_within(domain_of(m.sender), own_domains)\n"
+            "                or _within(list_domain, own_domains))", "return True",
+     "test_classify_rules.py::test_list_mail_from_or_about_the_owners_own_domain_is_never_bulk"),
+    (RULES, 'Rule("receipt", 0.96, conversations=False,', 'Rule("receipt", 0.96,',
+     "test_classify_rules.py::test_a_reply_or_a_question_is_never_a_receipt"),
+    (RULES, 'subject_any=("% off", "deal",', 'subject_any=("% off", "sale", "deal",',
+     "test_classify_rules.py::test_the_word_sale_alone_is_not_a_reason_to_trash"),
 ]
 
 

@@ -39,7 +39,7 @@ Your corrections:
 | | |
 |---|---|
 | **Staged autonomy** | `trial` (suggest only), then `file` (label/archive), then `trash`. The stage is a ceiling passed as `--max-stage` by the scheduler. The config can lower it but never raise it, and nothing the model returns can express a stage or an action. |
-| **A confidence floor, not a vibe** | Acting needs ≥ 0.95. The config can raise the floor but not lower it (lower values are clamped, with a warning). Malformed answers (unknown category, NaN, `1.7`, `true`) are invalid and never guessed at. Anything below the floor is left untouched and listed for review. |
+| **A confidence floor, measured** | Acting needs ≥ 0.95. The config can raise the floor but not lower it (lower values are clamped, with a warning). Malformed answers (unknown category, NaN, `1.7`, `true`) are invalid and never guessed at. Anything below the floor is left untouched and listed for review. What the floor buys is [measured on labelled mail](#measuring-a-classifier), not assumed: on the bundled corpus nothing is trashed by mistake and no personal mail leaves the inbox. |
 | **Spam rescue that resists spoofing** | Trusted senders' mail leaves Spam only with a DMARC pass, or a DKIM pass aligned with From, in the topmost `Authentication-Results` header stamped by the mailbox's own server. The classifier never moves mail out of Spam. |
 | **Blast-radius limits** | Trash is capped per run and per day (hard ceilings in code), and the count is persisted *before* each API call. Mail that arrived before trashing was switched on is held back until the operator approves the exact count. |
 | **Duplicate detection** | Same Message-ID, or the same sender + body + attachment manifest within 48 hours (next month's identical reminder is a new message). A matching subject alone never makes a duplicate, a near-empty body never matches on content, and a copy never overrides a policy that keeps the mail. |
@@ -47,7 +47,7 @@ Your corrections:
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
 | **Crash-safe bookkeeping** | Append-only JSONL ledger with `start`, `intent` and `decision` rows (every change is written down before it is made), atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 413 tests (284 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 436 tests (300 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
 
 ## How a run works
 
@@ -312,12 +312,73 @@ JSON, and treats anything unparseable as invalid. After one outage in a run, the
 called again until the next run; those messages wait. A runnable version is in
 [`examples/custom_classifier.py`](examples/custom_classifier.py).
 
+### Measuring a classifier
+
+The floor is a gate on a number the classifier states: a rule's fixed confidence, or a model's
+own estimate. Neither is a probability until it is measured.
+[`tools/eval_classifier.py`](tools/eval_classifier.py) measures it on labelled mail. For each
+category it reports how often an answer at or above the floor was right, with a 95% Wilson
+lower bound because a small corpus can't promise more. It also compares stated confidence with
+accuracy, and lists mail that would be trashed by mistake and personal or other mail that would
+leave the inbox. The bundled [`eval/corpus.json`](eval/corpus.json) is 108 made-up messages for
+the fictional bakery, including group threads, customers replying about orders, community
+newsletters, phishing and a prompt injection. CI runs it, and a test keeps this table equal to
+what it measures:
+
+<!-- eval:rules -->
+`rules` on 108 labelled messages, floor 0.95:
+
+| category | labelled | answered at >= 0.95 | right | precision | 95% lower bound | recall |
+|---|---:|---:|---:|---:|---:|---:|
+| invoice | 12 | 9 | 9 | 1.00 | 0.70 | 0.75 |
+| receipt | 12 | 11 | 10 | 0.91 | 0.62 | 0.83 |
+| contract | 8 | 6 | 5 | 0.83 | 0.44 | 0.62 |
+| support | 8 | 5 | 5 | 1.00 | 0.57 | 0.62 |
+| newsletter | 14 | 17 | 13 | 0.76 | 0.53 | 0.93 |
+| promotion | 14 | 9 | 9 | 1.00 | 0.70 | 0.64 |
+| notification | 12 | 0 | 0 | - | - | 0.00 |
+| personal | 14 | 0 | 0 | - | - | 0.00 |
+| other | 14 | 0 | 0 | - | - | 0.00 |
+| **all** | 108 | 57 | 51 | 0.89 | 0.79 | 0.47 |
+
+- Acted on under the default policy: 57 of 108; the rest is left alone (kept, or reported for review).
+- Trashed by mistake: none.
+- Personal or other mail moved out of the inbox: none.
+- Wrong at the floor: `pro-towels` (promotion answered newsletter), `pro-aprons` (promotion answered newsletter), `pro-webinar` (promotion answered newsletter), `not-shipped` (notification answered receipt), `not-review` (notification answered newsletter), `per-lease-chat` (personal answered contract).
+- No usable answer: 0.
+
+| stated confidence | answers | right | accuracy |
+|---|---:|---:|---:|
+| 0.50-0.80 | 51 | 14 | 0.27 |
+| 0.95-0.97 | 48 | 42 | 0.88 |
+| 0.97-0.99 | 9 | 9 | 1.00 |
+<!-- /eval:rules -->
+
+How to read it: the corpus was written alongside the rules, so it is a regression suite for
+known hard cases, not an estimate of accuracy on your mail. Three rule fixes came with it, and
+the numbers include them:
+
+- list headers on discussion-group mail (Google Groups and the like put them on every post,
+  business threads included), on replies, or on the owner's own domain no longer make bulk mail;
+- "sale" alone no longer makes a promotion (a bake sale, a point-of-sale newsletter);
+- a customer's reply or question about an order is no longer archived as a receipt.
+
+What is still wrong at the floor leaves mail where it can be found: promotions archived as
+newsletters instead of trashed, notifications archived as receipts or newsletters (archive is
+their own policy too), and a personal note labelled as a contract but left in the inbox. The
+stated confidences are not calibrated: answers stated at 0.95-0.97 are right 88% of the time
+here, which is one reason trash also has caps, a backlog line and undo. To measure your own mail, export a few
+hundred messages in the same JSON with a `label` each and run
+`python tools/eval_classifier.py --corpus yours.json`. Add `--classifier llm --model NAME` (or
+`rules+llm`) to measure a model, whose self-reported confidence deserves the same suspicion.
+
 ## Testing
 
 ```bash
-pytest                           # 413 tests, ~3 s, offline, no keys
+pytest                           # 436 tests, ~3 s, offline, no keys
 ruff check src tests examples tools
-python tools/mutation_check.py   # 33 guards: each one removed must turn its test red
+python tools/mutation_check.py   # 38 guards: each one removed must turn its test red
+python tools/eval_classifier.py  # precision at the floor on eval/corpus.json
 ```
 
 [`tests/fakes.py`](tests/fakes.py) builds a `World`: an in-memory mailbox with Gmail's label
@@ -362,7 +423,8 @@ POSIX file-permission tests are skipped.
 - Microsoft 365 (Graph) and IMAP adapters behind the same `Mailbox` protocol
 - Known-correspondent protection: never trash mail from people the owner has written to
 - An anomaly breaker that stops trashing when a run wants to trash an unusual share of the inbox
-- Per-category floors (for example 0.99 for anything that maps to trash)
+- A larger, independently labelled corpus, and per-category floors set from it (for example
+  0.99 for anything that maps to trash)
 - Re-evaluating review items after the owner changes the policy
 
 ## License

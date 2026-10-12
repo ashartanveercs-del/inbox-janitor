@@ -23,3 +23,5 @@ jobs:
         run: python examples/demo.py
       - name: Every safety guard has a test that fails without it
         run: python tools/mutation_check.py
+      - name: Classifier precision at the floor on the labelled corpus
+        run: python tools/eval_classifier.py
