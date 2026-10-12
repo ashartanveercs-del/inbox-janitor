@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from inbox_janitor.mailbox import MailboxError, NotFound, Outgoing
-from inbox_janitor.mailbox.gmail import GmailMailbox, OAuthToken
+from inbox_janitor.mailbox.gmail import GmailMailbox, OAuthToken, parse_message
 from inbox_janitor.net import HttpResponse
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me/"
@@ -222,6 +222,20 @@ def test_an_html_only_body_is_reduced_to_text():
     body = gmail(google).fetch("18c2f0a1").body
     assert "x()" not in body and "p{}" not in body
     assert body.split() == ["Hello", "there", "Bye"]
+
+
+@pytest.mark.parametrize("charset", ["undefined", "idna", "no-such-charset"])
+def test_a_charset_that_cannot_decode_falls_back_to_utf8(charset):
+    """The sender writes the charset. Some names Python knows still refuse to decode
+    ('undefined' always raises, 'idna' refuses errors='replace'): that must never make the
+    message unreadable, or one stranger's email would fail every run."""
+    data = full_message()
+    data["payload"] = {"mimeType": "text/plain",
+                       "headers": [{"name": "From", "value": "a@b.example.com"},
+                                   {"name": "Content-Type",
+                                    "value": f'text/plain; charset="{charset}"'}],
+                       "body": {"data": b64("Invoice attached.")}}
+    assert parse_message(data, {}).body == "Invoice attached."
 
 
 # -- writing -------------------------------------------------------------------------------

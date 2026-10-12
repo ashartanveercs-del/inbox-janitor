@@ -221,7 +221,7 @@ def _text(part: Mapping[str, Any]) -> str:
             charset = found.group(1) if found else charset
     try:
         return raw.decode(charset, errors="replace")
-    except LookupError:
+    except (LookupError, ValueError):   # unknown name, or a codec that refuses (UnicodeError)
         return raw.decode("utf-8", errors="replace")
 
 

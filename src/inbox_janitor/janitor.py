@@ -43,6 +43,7 @@ KEEP_DIGESTS = 60        # digest ids remembered for matching replies
 REPLY_OVERLAP = timedelta(hours=1)
 DIGEST_DOMAIN = "inbox-janitor.invalid"
 SETTLED = frozenset({"done", "kept", "review", "backlog", "failed"})
+SPAM_MARK = "reading_spam"   # state key: the spam message being read right now
 
 
 class WrongAccount(Exception):
@@ -158,11 +159,20 @@ class Janitor:
     # -- spam rescue ----------------------------------------------------------------------------
 
     def _rescue(self, report: RunReport) -> None:
+        """Spam gets the same poison accounting as the inbox: a stranger's mail lands here by
+        default, and this runs first, so no single message may stop it. Spam left in place
+        writes nothing to the ledger (most of it is re-read every run), so the message being
+        read is noted in the state file instead: a run that dies reading it blames it."""
+        died_on = self.state.pop(SPAM_MARK, None)
+        if died_on:
+            self.ledger.append({"kind": "error", "ref": died_on, "ticket": self._ticket(died_on),
+                                "what": "Killed"})
         try:
             refs = self.mailbox.search("spam", self._since())
         except MailboxError:
             report.problem("mailbox")
             return
+        streak = 0
         for ref in reversed(refs):
             # Already handled once (rescued, or triaged in the inbox) and in Spam again: the
             # owner (or an undo) put it there on purpose. Rescuing it again would be a daily
@@ -170,24 +180,38 @@ class Janitor:
             if self.ledger.is_final(ref) or self.ledger.decision(ref) is not None:
                 report.left_in_spam += 1
                 continue
+            if self.ledger.failures(ref) >= MAX_TRIES:
+                self._give_up(ref, report)
+                continue
+            self.state[SPAM_MARK] = ref
+            self.state.save()
             try:
-                m = self.mailbox.fetch(ref)
-                verdict = judge(m, self.config.trusted_senders, self.mailbox.serv_id,
-                                also_trusted=self.rules.trusted)
-                if not verdict.rescue:
-                    report.left_in_spam += 1
-                    report.unauthenticated += verdict.reason == "unauthenticated"
-                    continue
-                # RESCUE is permitted at every stage: in trial, doing nothing loses mail
-                ticket = self._ticket(ref)
-                applied = self._change(m, add=[INBOX], remove=[SPAM])
-                self.ledger.append(self._row(m, ticket, Verdict(
-                    "act", Action.RESCUE, "trusted"), "rescued", applied))
-                self.state["last_acting_run"] = self._run_id
-                report.items.append(self._item(m, ticket, "rescued", Verdict(
-                    "act", Action.RESCUE, "trusted")))
-            except MailboxError:
-                report.problem("mailbox")
+                self._rescue_one(ref, report)
+                streak = 0
+            except Exception as err:                # one bad message never stops the others
+                streak += 1
+                self._failed(ref, err, report)
+                if streak >= HALT_AFTER:            # an outage: stop asking, triage still runs
+                    report.problem("spam_halted")
+                    break
+        self.state.pop(SPAM_MARK, None)
+
+    def _rescue_one(self, ref: str, report: RunReport) -> None:
+        m = self.mailbox.fetch(ref)
+        verdict = judge(m, self.config.trusted_senders, self.mailbox.serv_id,
+                        also_trusted=self.rules.trusted)
+        if not verdict.rescue:
+            report.left_in_spam += 1
+            report.unauthenticated += verdict.reason == "unauthenticated"
+            return
+        # RESCUE is permitted at every stage: in trial, doing nothing loses mail
+        ticket = self._ticket(ref)
+        applied = self._change(m, add=[INBOX], remove=[SPAM])
+        self.ledger.append(self._row(m, ticket, Verdict("act", Action.RESCUE, "trusted"),
+                                     "rescued", applied))
+        self.state["last_acting_run"] = self._run_id
+        report.items.append(self._item(m, ticket, "rescued",
+                                       Verdict("act", Action.RESCUE, "trusted")))
 
     # -- triage ---------------------------------------------------------------------------------
 

@@ -1,8 +1,8 @@
 import hashlib
 
 import pytest
-from factories import invoice, msg, newsletter, promotion
-from fakes import FlakyMailbox, ScriptedClassifier, World, auth_ok
+from factories import OWNER, invoice, msg, newsletter, promotion
+from fakes import SERVER, FlakyMailbox, ScriptedClassifier, World, auth_ok
 
 from inbox_janitor.janitor import WrongAccount
 from inbox_janitor.models import Classification, Message
@@ -17,12 +17,27 @@ class Crash(BaseException):
 class CrashingMailbox(FlakyMailbox):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.crash_on: set[str] = set()
+        self.crash_on: set[str] = set()      # reading these kills the process
+        self.unreadable: set[str] = set()    # reading these raises what a parser bug raises
 
     def fetch(self, ref: str) -> Message:
         if ref in self.crash_on:
             raise Crash(ref)
+        if ref in self.unreadable:
+            self.fetched.append(ref)
+            raise UnicodeError("undefined encoding")
         return super().fetch(ref)
+
+
+def crashing_world(tmp_path, *messages, stage=Stage.FILE, **kw) -> World:
+    w = World(tmp_path, *messages, stage=stage, **kw)
+    w.mailbox = CrashingMailbox(OWNER, messages, serv_id=SERVER, now=w.clock.now)
+    return w
+
+
+def stored_labels(w: World, m: Message) -> set[str]:
+    """The labels as the mailbox holds them, without a fetch that may be rigged to fail."""
+    return set(w.mailbox.messages[m.ref].labels)
 
 
 def test_one_bad_message_never_stops_the_rest(tmp_path):
@@ -71,6 +86,55 @@ def test_a_message_that_kills_the_process_cannot_block_every_later_run(tmp_path)
         w.clock.advance(days=1)
     report = w.run()                                     # the fourth run skips it
     assert {i.ref: i.outcome for i in report.items}[poison.ref] == "failed"
+    assert "INBOX" not in w.labels(fine)
+
+
+def test_one_spam_message_that_fails_to_parse_does_not_stop_triage(tmp_path):
+    """Spam is where a stranger's mail lands by default, and it is read before the inbox."""
+    junk, fine = promotion(labels=("SPAM",)), newsletter()
+    w = crashing_world(tmp_path, junk, fine)
+    w.mailbox.unreadable = {junk.ref}
+    report = w.run()
+    assert "INBOX" not in w.labels(fine) and stored_labels(w, junk) == {"SPAM"}
+    assert "error" in report.problems
+
+
+def test_a_spam_message_that_keeps_failing_is_reported_after_three_tries(tmp_path):
+    junk, fine = promotion(labels=("SPAM",)), newsletter()
+    w = crashing_world(tmp_path, junk, fine)
+    w.mailbox.unreadable = {junk.ref}
+    for _ in range(3):
+        report = w.run()
+        w.clock.advance(days=1)
+    assert [i.outcome for i in report.items if i.ref == junk.ref] == ["failed"]
+    tries = w.mailbox.fetched.count(junk.ref)
+    w.run()
+    assert w.mailbox.fetched.count(junk.ref) == tries     # given up on: not read again
+    assert stored_labels(w, junk) == {"SPAM"}
+
+
+def test_a_spam_message_that_kills_the_process_cannot_block_every_later_run(tmp_path):
+    poison, fine = promotion(labels=("SPAM",)), newsletter()
+    w = crashing_world(tmp_path, poison, fine)
+    w.mailbox.crash_on = {poison.ref}
+    for _ in range(3):
+        with pytest.raises(Crash):
+            w.run()
+        w.clock.advance(days=1)
+    report = w.run()                                     # the fourth run skips it
+    assert {i.ref: i.outcome for i in report.items}[poison.ref] == "failed"
+    assert "INBOX" not in w.labels(fine) and stored_labels(w, poison) == {"SPAM"}
+
+
+def test_three_spam_failures_in_a_row_stop_the_spam_check_but_not_triage(tmp_path):
+    junk = [promotion(labels=("SPAM",), subject=f"Prize {n}", body=f"Prize number {n} inside.")
+            for n in range(4)]
+    fine = newsletter()
+    w = crashing_world(tmp_path, *junk, fine)
+    w.mailbox.fail_fetch = {m.ref for m in junk}           # the mailbox is having a bad day
+    report = w.run()
+    assert sum(w.mailbox.fetched.count(m.ref) for m in junk) == 3
+    assert "spam_halted" in report.problems and not report.halted
     assert "INBOX" not in w.labels(fine)
 
 

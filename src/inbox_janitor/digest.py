@@ -24,6 +24,8 @@ PROBLEMS = {
                               "tried again next run.",
     "mailbox": "The mailbox didn't answer for some messages; they will be tried again next run.",
     "halted": "The run stopped early after several failures in a row; it carries on next run.",
+    "spam_halted": "Checking Spam stopped early after several failures in a row; it carries on "
+                   "next run.",
     "state_reset": "The state file was damaged and was set aside; nothing in the mailbox was "
                    "lost.",
     "rules_reset": "The saved rules file was damaged and was set aside; please send the rules "

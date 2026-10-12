@@ -35,8 +35,13 @@ MUTATIONS = [
     (JANITOR, "if self.ledger.cut_off(ref):            # a run died while working on it",
      "if False:",
      "test_janitor_robustness.py::test_a_message_that_kills_the_process_cannot_block_every_later_run"),
-    (JANITOR, "if streak >= HALT_AFTER:", "if False:",
+    (JANITOR, "if streak >= HALT_AFTER:\n                    report.halted = True",
+     "if False:\n                    report.halted = True",
      "test_janitor_robustness.py::test_three_failures_in_a_row_halt_the_run"),
+    (JANITOR, "if streak >= HALT_AFTER:            # an outage",
+     "if False:            # an outage",
+     "test_janitor_robustness.py::"
+     "test_three_spam_failures_in_a_row_stop_the_spam_check_but_not_triage"),
     (JANITOR, "if self.ledger.is_final(ref) or self.ledger.decision(ref) is not None:",
      "if False:",
      "test_janitor_robustness.py::test_undoing_a_rescue_returns_it_to_spam_for_good"),
@@ -68,6 +73,17 @@ MUTATIONS = [
      "if isinstance(confidence, bool) or not isinstance(confidence, int | float | str):",
      "if not isinstance(confidence, int | float | str):",
      "test_classify_rules.py::test_checked_turns_a_bad_confidence_into_an_invalid_answer"),
+    ("src/inbox_janitor/mailbox/gmail.py", "except (LookupError, ValueError):",
+     "except LookupError:",
+     "test_gmail.py::test_a_charset_that_cannot_decode_falls_back_to_utf8"),
+    (JANITOR, "self._rescue_one(ref, report)\n                streak = 0\n"
+              "            except Exception as err:",
+     "self._rescue_one(ref, report)\n                streak = 0\n"
+     "            except MailboxError as err:",
+     "test_janitor_robustness.py::test_one_spam_message_that_fails_to_parse_does_not_stop_triage"),
+    (JANITOR, "        if died_on:", "        if False:",
+     "test_janitor_robustness.py::"
+     "test_a_spam_message_that_kills_the_process_cannot_block_every_later_run"),
 ]
 
 
