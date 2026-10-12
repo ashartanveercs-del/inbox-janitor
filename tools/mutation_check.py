@@ -27,9 +27,23 @@ MUTATIONS = [
     (JANITOR, "if SENT not in m.labels or m.sender != self.config.owner \\",
      "if m.sender != self.config.owner \\",
      "test_janitor_replies.py::test_the_sent_label_is_checked_even_if_the_search_is_too_broad"),
-    (JANITOR, "self._count_trash()\n            self.mailbox.trash(m.ref)",
-     "self.mailbox.trash(m.ref)\n            self._count_trash()",
+    (JANITOR, "            self._count_trash()\n            ops = [[\"trash\"]]\n"
+              "            self._intend(m.ref, ticket, verdict.action, ops)\n"
+              "            self.mailbox.trash(m.ref)\n",
+     "            ops = [[\"trash\"]]\n"
+     "            self._intend(m.ref, ticket, verdict.action, ops)\n"
+     "            self.mailbox.trash(m.ref)\n            self._count_trash()\n",
      "test_janitor_stages.py::test_the_trash_count_is_saved_before_the_trash_call"),
+    (JANITOR, "            self._intend(m.ref, ticket, verdict.action, ops)\n"
+              "            self.mailbox.trash(m.ref)\n",
+     "            self.mailbox.trash(m.ref)\n"
+     "            self._intend(m.ref, ticket, verdict.action, ops)\n",
+     "test_janitor_robustness.py::test_a_change_made_just_before_a_crash_can_still_be_undone"),
+    (JANITOR, "            self._intend(m.ref, ticket, action, ops)\n"
+              "            self.mailbox.modify(m.ref, add=adding, remove=removing)\n",
+     "            self.mailbox.modify(m.ref, add=adding, remove=removing)\n"
+     "            self._intend(m.ref, ticket, action, ops)\n",
+     "test_janitor_robustness.py::test_a_change_made_just_before_a_crash_can_still_be_undone"),
     (JANITOR, 'self.state.pop("trash_since", None)', "pass",
      "test_janitor_stages.py::test_dropping_below_trash_resets_when_trash_counts_from"),
     (JANITOR, "if self.ledger.cut_off(ref):            # a run died while working on it",
@@ -105,6 +119,12 @@ MUTATIONS = [
     (JANITOR, 'original = dups.original_of(ref, fps, received) if verdict.outcome == "act"',
      "original = dups.original_of(ref, fps, received) if True",
      "test_janitor_stages.py::test_a_copy_never_overrides_a_policy_that_keeps_the_mail"),
+    (JANITOR, 'if ref in inbox or intent.get("action") not in (Action.TRASH, Action.ARCHIVE):',
+     "if True:",
+     "test_janitor_robustness.py::test_a_change_cut_off_by_a_crash_is_listed_on_the_next_run"),
+    ("src/inbox_janitor/commands.py", "run = ctx.ledger.last_acting_run()",
+     'run = ctx.state.get("last_acting_run")',
+     "test_janitor_robustness.py::test_undo_last_reaches_a_change_made_just_before_a_crash"),
 ]
 
 

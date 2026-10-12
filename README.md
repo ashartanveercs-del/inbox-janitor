@@ -45,9 +45,9 @@ Your corrections:
 | **Duplicate detection** | Same Message-ID, or the same sender + body + attachment manifest within 48 hours (next month's identical reminder is a new message). A matching subject alone never makes a duplicate, a near-empty body never matches on content, and a copy never overrides a policy that keeps the mail. |
 | **Undo by reply** | `undo 3`, `undo last`, `keep 5`, `never trash newsletters from …`, `never touch …`, `trust …`, `pause`, `resume`. Every command reverses something, protects mail, or pauses and resumes the janitor. None can raise the stage, lower the floor or add a way to destroy mail. |
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
-| **Crash-safe bookkeeping** | Append-only JSONL ledger with `start` and `decision` rows, atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
+| **Crash-safe bookkeeping** | Append-only JSONL ledger with `start`, `intent` and `decision` rows (every change is written down before it is made), atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 408 tests (280 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 413 tests (284 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
 
 ## How a run works
 
@@ -136,13 +136,16 @@ call, so a process killed mid-call can only leave the count too high (fewer tras
 never too low. There are caps per run and per day, with ceilings of 200 and 500 in code
 whatever the config says.
 
-**5. Undo means "exactly as it was".** Each change is logged as the minimal label diff actually
-applied: a label the owner had already set is not recorded, so undo won't strip it. Reversal
-restores every label to the opposite of the *first* change made to it, so a message that was
-rescued and then archived goes back to Spam. Undoing a suggestion means "leave it alone". Undo
-is idempotent, so a reply that failed halfway can safely be applied again from the top, and the
-window that searches for replies only moves on once every reply in it was applied, so a failed
-one is still found by the next run however long the gap. Two runs
+**5. Undo means "exactly as it was".** Each change is logged as the minimal label diff it
+applies: a label the owner had already set is not recorded, so undo won't strip it. The diff is
+written *before* the provider call (an `intent` row, like the trash count), so a run killed
+between the change and its record still leaves the change in the undo history, `undo last`
+still reaches it, and the next run lists it in the digest; undoing a change that never happened
+does nothing. Reversal restores every label to the opposite of the *first* change made to it,
+so a message that was rescued and then archived goes back to Spam. Undoing a suggestion means
+"leave it alone". Undo is idempotent, so a reply that failed halfway can safely be applied
+again from the top, and the window that searches for replies only moves on once every reply in
+it was applied, so a failed one is still found by the next run however long the gap. Two runs
 in the same second get distinct ids, so `undo last` never reaches into the earlier one.
 
 **6. The digest is a command channel that quotes strangers.** Subjects are attacker-controlled,
@@ -312,9 +315,9 @@ called again until the next run; those messages wait. A runnable version is in
 ## Testing
 
 ```bash
-pytest                           # 408 tests, ~3 s, offline, no keys
+pytest                           # 413 tests, ~3 s, offline, no keys
 ruff check src tests examples tools
-python tools/mutation_check.py   # 29 guards: each one removed must turn its test red
+python tools/mutation_check.py   # 33 guards: each one removed must turn its test red
 ```
 
 [`tests/fakes.py`](tests/fakes.py) builds a `World`: an in-memory mailbox with Gmail's label

@@ -6,7 +6,7 @@ from fakes import SERVER, FlakyMailbox, ScriptedClassifier, World, auth_ok
 
 from inbox_janitor.janitor import WrongAccount
 from inbox_janitor.models import Classification, Message
-from inbox_janitor.stages import Stage
+from inbox_janitor.stages import Action, Stage
 from inbox_janitor.storage import Ledger
 
 
@@ -87,6 +87,81 @@ def test_a_message_that_kills_the_process_cannot_block_every_later_run(tmp_path)
     report = w.run()                                     # the fourth run skips it
     assert {i.ref: i.outcome for i in report.items}[poison.ref] == "failed"
     assert "INBOX" not in w.labels(fine)
+
+
+class DiesAfterTheCall(FlakyMailbox):
+    """The provider carries out the change, then the process is killed before the janitor
+    can write down what it did."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.die_after: set[str] = set()     # "trash", "modify"
+
+    def trash(self, ref: str) -> None:
+        super().trash(ref)
+        if "trash" in self.die_after:
+            raise Crash(ref)
+
+    def modify(self, ref, add=(), remove=()) -> None:
+        super().modify(ref, add, remove)
+        if "modify" in self.die_after:
+            raise Crash(ref)
+
+
+def dying_world(tmp_path, *messages, stage=Stage.TRASH) -> World:
+    w = World(tmp_path, *messages, stage=stage)
+    w.mailbox = DiesAfterTheCall(OWNER, messages, serv_id=SERVER, now=w.clock.now)
+    return w
+
+
+@pytest.mark.parametrize(("stage", "die_after", "before"), [
+    (Stage.TRASH, "trash", {"INBOX", "UNREAD"}),
+    (Stage.FILE, "modify", {"INBOX", "UNREAD"}),
+])
+def test_a_change_made_just_before_a_crash_can_still_be_undone(tmp_path, stage, die_after,
+                                                               before):
+    p = promotion() if stage is Stage.TRASH else newsletter()
+    w = dying_world(tmp_path, p, stage=stage)
+    w.mailbox.die_after = {die_after}
+    with pytest.raises(Crash):
+        w.run()
+    assert w.labels(p) != before                      # the change went through
+    w.mailbox.die_after = set()
+    assert w.janitor().command("undo 1") == ["undo #1: put back"]
+    assert w.labels(p) == before
+
+
+def test_undo_last_reaches_a_change_made_just_before_a_crash(tmp_path):
+    first = promotion()
+    w = dying_world(tmp_path, first)
+    w.run()
+    second = promotion(subject="Another sale: 30% off", body="Another offer, limited time.",
+                       received=w.clock.now())
+    w.mailbox.add(second)
+    w.clock.advance(hours=1)
+    w.mailbox.die_after = {"trash"}
+    with pytest.raises(Crash):
+        w.run()
+    w.mailbox.die_after = set()
+    assert w.janitor().command("undo last") == ["undo #2: put back"]
+    assert "TRASH" in w.labels(first) and "TRASH" not in w.labels(second)
+
+
+def test_a_change_cut_off_by_a_crash_is_listed_on_the_next_run(tmp_path):
+    """Triage never meets a trashed message again, so the next run reports it: the owner
+    needs its number to undo it by reply."""
+    p = promotion()
+    w = dying_world(tmp_path, p)
+    w.mailbox.die_after = {"trash"}
+    with pytest.raises(Crash):
+        w.run()
+    w.mailbox.die_after = set()
+    report = w.run()
+    assert [(i.ref, i.ticket, i.outcome, i.action) for i in report.items] == [
+        (p.ref, 1, "done", Action.TRASH)]
+    line = next(x for x in w.digests()[-1].body.splitlines() if "#1 " in x)
+    assert "trashed" in line and "recorded after a crash" in line
+    assert w.run().items == []                        # settled: not reported twice
 
 
 def test_one_spam_message_that_fails_to_parse_does_not_stop_triage(tmp_path):

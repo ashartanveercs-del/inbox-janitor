@@ -4,6 +4,7 @@ Ledger rows hold provider message ids, ticket numbers, keyed fingerprints, categ
 confidences and outcome codes - never subjects, addresses or bodies. Row kinds:
 
     start     written before a message is worked on
+    intent    the exact label diff about to be made, written before the provider call
     decision  what was decided for it and which changes were applied
     error     working on it raised (only the exception's type is kept)
     undo      the owner reversed it; it is final from then on
@@ -11,8 +12,10 @@ confidences and outcome codes - never subjects, addresses or bodies. Row kinds:
     reply     a reply-command message was processed (by fingerprint)
 
 A `start` with no `decision` or `error` after it means a run died on that message, so a
-message that crashes the process can't block every later run. Every row carries `ts`, the
-epoch second it was written; retention and torn-write repair both key off it.
+message that crashes the process can't block every later run. The undo history is built from
+`intent` rows, not decisions: a run that dies between the provider call and its decision has
+still told undo what it may have done (undoing a change that never happened is a no-op). Every
+row carries `ts`, the epoch second it was written; retention and torn-write repair key off it.
 """
 
 from __future__ import annotations
@@ -87,6 +90,8 @@ class Ledger:
         self._final: set[str] = set()
         self._undone: set[str] = set()
         self._history: dict[str, list[list[str]]] = {}
+        self._unconfirmed: dict[str, dict[str, Any]] = {}
+        self._last_acting_run: str | None = None
         self._replies: set[str] = set()
         self._load(keep_days)
 
@@ -123,6 +128,10 @@ class Ledger:
             return
         if kind == "start":
             self._open.add(ref)
+        elif kind == "intent":
+            self._history.setdefault(ref, []).extend(row.get("ops") or [])
+            self._unconfirmed[ref] = row
+            self._last_acting_run = row.get("run") or self._last_acting_run
         elif kind == "error":
             self._open.discard(ref)
             self._errors[ref] = self._errors.get(ref, 0) + 1
@@ -130,14 +139,13 @@ class Ledger:
             self._open.discard(ref)
             self._errors.pop(ref, None)
             self._latest[ref] = row
-            self._history.setdefault(ref, []).extend(row.get("applied") or [])
-        elif kind == "undo":
+            self._unconfirmed.pop(ref, None)
+        elif kind in ("undo", "keep"):
             self._final.add(ref)
-            if row.get("ok"):
+            self._unconfirmed.pop(ref, None)
+            if kind == "undo" and row.get("ok"):
                 self._undone.add(ref)
                 self._history[ref] = []
-        elif kind == "keep":
-            self._final.add(ref)
 
     def append(self, row: Mapping[str, Any]) -> dict[str, Any]:
         """Stamp the row (any stamp it already had is replaced), write it durably, index it."""
@@ -171,7 +179,17 @@ class Ledger:
         return self._errors.get(ref, 0)
 
     def history(self, ref: str) -> list[list[str]]:
+        """Every change made (or begun) on the message since it was last undone, in order."""
         return list(self._history.get(ref, []))
+
+    def unconfirmed(self) -> dict[str, dict[str, Any]]:
+        """The latest intent row of each message whose change has no decision after it: a run
+        died between the provider call and writing down what it did."""
+        return dict(self._unconfirmed)
+
+    def last_acting_run(self) -> str | None:
+        """The run that last changed the mailbox, crashed or not: the newest intent's run."""
+        return self._last_acting_run
 
     def is_final(self, ref: str) -> bool:
         return ref in self._final

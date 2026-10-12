@@ -121,6 +121,8 @@ def test_the_index_is_rebuilt_from_the_ledger_but_skips_what_was_trashed(tmp_pat
         message_id="<t@x.example.com>", body="A different newsletter body for this one.")
     for ticket, (m, applied) in enumerate([(kept, []), (trashed, [["trash"]])], 1):
         f = fingerprints(m, FP)
+        if applied:
+            ledger.append({"kind": "intent", "ref": m.ref, "ticket": ticket, "ops": applied})
         ledger.append({"kind": "decision", "ref": m.ref, "ticket": ticket, "applied": applied,
                        "fp": {"sender": f.sender, "msgid": f.msgid, "content": f.content}})
     index = DuplicateIndex.from_ledger(ledger)

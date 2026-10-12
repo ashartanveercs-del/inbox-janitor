@@ -68,6 +68,8 @@ def _what(i: Item) -> str:
         return "trusted sender"
     if i.outcome == "failed":
         return "kept failing; untouched"
+    if i.reason == "interrupted":
+        return "recorded after a crash"
     seen = f"{i.category} {i.confidence:.2f}" if i.category else ""
     return seen + (" (never-trash rule)" if i.reason == "never_trash" else "")
 

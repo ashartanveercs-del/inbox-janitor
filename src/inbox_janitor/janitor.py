@@ -28,7 +28,7 @@ from .config import Config
 from .dedupe import DuplicateIndex, fingerprints
 from .digest import compose
 from .mailbox import Mailbox, MailboxError, NotFound, Outgoing
-from .models import INBOX, SENT, SPAM, Message, is_system_label
+from .models import INBOX, SENT, SPAM, TRASH, Message, is_system_label
 from .policy import Verdict, decide, duplicate_verdict, exemption, gate
 from .privacy import Fingerprinter, load_or_create_key
 from .report import Item, RunReport
@@ -215,10 +215,9 @@ class Janitor:
             return
         # RESCUE is permitted at every stage: in trial, doing nothing loses mail
         ticket = self._ticket(ref)
-        applied = self._change(m, add=[INBOX], remove=[SPAM])
+        applied = self._change(m, ticket, Action.RESCUE, add=[INBOX], remove=[SPAM])
         self.ledger.append(self._row(m, ticket, Verdict("act", Action.RESCUE, "trusted"),
                                      "rescued", applied))
-        self.state["last_acting_run"] = self._run_id
         report.items.append(self._item(m, ticket, "rescued",
                                        Verdict("act", Action.RESCUE, "trusted")))
 
@@ -230,6 +229,7 @@ class Janitor:
         except MailboxError:
             report.problem("mailbox")
             return
+        self._settle_interrupted(set(refs), report)
         dups = DuplicateIndex.from_ledger(self.ledger)
         own = set(self.state.get("digest_refs", []))
         streak = 0
@@ -300,9 +300,8 @@ class Janitor:
             outcome = gate(verdict.action, stage=self.stage, received_day=self._day(m.received),
                            trash_since=self._trash_since(), trash_room=self._trash_room())
             if outcome == "apply":
-                applied = self._apply(m, verdict)
+                applied = self._apply(m, ticket, verdict)
                 outcome = "done"
-                self.state["last_acting_run"] = self._run_id
         row = self._row(m, ticket, verdict, outcome, applied, fps)
         if outcome == "wait":
             row["wait_since"] = wait_since or round(self.now().timestamp(), 3)
@@ -327,20 +326,24 @@ class Janitor:
 
     # -- changing the mailbox -------------------------------------------------------------------
 
-    def _apply(self, m: Message, verdict: Verdict) -> list[list[str]]:
+    def _apply(self, m: Message, ticket: int, verdict: Verdict) -> list[list[str]]:
         if verdict.action is Action.TRASH:
             # Counted and saved *before* the call: a crash can only leave the count too high
-            # (fewer trashes that day), never too low.
+            # (fewer trashes that day), never too low. The intent goes ahead of it too.
             self._count_trash()
+            ops = [["trash"]]
+            self._intend(m.ref, ticket, verdict.action, ops)
             self.mailbox.trash(m.ref)
-            return [["trash"]]
+            return ops
         if verdict.action is Action.LABEL:
-            return self._change(m, add=[verdict.label or ""])
+            return self._change(m, ticket, verdict.action, add=[verdict.label or ""])
         if verdict.action is Action.ARCHIVE:
-            return self._change(m, add=[verdict.label or ""], remove=[INBOX])
+            return self._change(m, ticket, verdict.action, add=[verdict.label or ""],
+                                remove=[INBOX])
         return []
 
-    def _change(self, m: Message, add: list[str], remove: list[str] = ()) -> list[list[str]]:
+    def _change(self, m: Message, ticket: int, action: Action, add: list[str],
+                remove: list[str] = ()) -> list[list[str]]:
         """One modify call with only the labels that actually change, recorded as ops, so an
         undo restores exactly the state before (a label the owner had already set stays).
         Filing adds labels of its own, plus INBOX for a rescue - never another system label:
@@ -349,9 +352,42 @@ class Janitor:
         removing = tuple(lb for lb in remove if lb in m.labels)
         if any(is_system_label(lb) and lb != INBOX for lb in adding):
             raise UnsafeChange("a filing change may not add a system label")
-        if adding or removing:
+        ops = [["label", lb] for lb in adding] + [["unlabel", lb] for lb in removing]
+        if ops:
+            self._intend(m.ref, ticket, action, ops)
             self.mailbox.modify(m.ref, add=adding, remove=removing)
-        return [["label", lb] for lb in adding] + [["unlabel", lb] for lb in removing]
+        return ops
+
+    def _intend(self, ref: str, ticket: int, action: Action, ops: list[list[str]]) -> None:
+        """Write the change down before making it: if the process dies mid-call (or right
+        after), undo still knows what may have been done, and the next run can report it."""
+        self.ledger.append({"kind": "intent", "ref": ref, "ticket": ticket, "run": self._run_id,
+                            "action": action.value, "ops": ops})
+
+    def _settle_interrupted(self, inbox: set[str], report: RunReport) -> None:
+        """A run that died between a trash or archive call and its decision row. If the message
+        has left the inbox, triage will never meet it again: record the change as done and list
+        it, so the owner sees its number and can undo it. (Undo knows it already, from the
+        intent row.) If it is still in the inbox, triage simply works on it again."""
+        for ref, intent in sorted(self.ledger.unconfirmed().items()):
+            if ref in inbox or intent.get("action") not in (Action.TRASH, Action.ARCHIVE):
+                continue
+            try:
+                m = self.mailbox.fetch(ref)
+            except NotFound:
+                m = None
+            except Exception:                       # unreadable for now: next run tries again
+                continue
+            ticket, ops = int(intent["ticket"]), intent.get("ops") or []
+            verdict = Verdict("act", Action(intent["action"]), "interrupted")
+            if m is not None and _in_effect(ops, m.labels):
+                self.ledger.append(self._row(m, ticket, verdict, "done", ops))
+                report.items.append(self._item(m, ticket, "done", verdict))
+            else:                                   # it never happened, or the owner moved it
+                self.ledger.append({"kind": "decision", "ref": ref, "ticket": ticket,
+                                    "run": self._run_id, "stage": str(self.stage),
+                                    "outcome": "kept", "wanted": verdict.action.value,
+                                    "reason": "changed_since", "applied": []})
 
     def _count_trash(self) -> None:
         today = self._today().isoformat()
@@ -414,11 +450,9 @@ class Janitor:
         for row, m in valid:
             if self._trash_room() <= 0:
                 break
-            applied = self._apply(m, Verdict("act", Action.TRASH))
+            applied = self._apply(m, row["ticket"], Verdict("act", Action.TRASH))
             self._redo(row, "done", "backlog_approved", applied)
             trashed += 1
-        if trashed:
-            self.state["last_acting_run"] = self._run_id
         self.state.save()
         return trashed, len(valid) - trashed
 
@@ -516,6 +550,18 @@ class Janitor:
 
     def _day(self, moment: datetime) -> date:
         return moment.astimezone(self.tz).date()
+
+
+def _in_effect(ops: list[list[str]], labels: frozenset[str]) -> bool:
+    """Whether a message's labels show that every op of a change went through."""
+    for op in ops:
+        if op[0] == "trash" and TRASH not in labels:
+            return False
+        if op[0] == "label" and op[1] not in labels:
+            return False
+        if op[0] == "unlabel" and op[1] in labels:
+            return False
+    return True
 
 
 def read_status(config: Config, state_dir: Path | str,

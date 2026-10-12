@@ -71,15 +71,34 @@ def test_a_start_with_nothing_after_it_means_a_run_died_on_that_message(tmp_path
     assert not ledger.cut_off("m1") and ledger.failures("m1") == 0
 
 
-def test_applied_changes_accumulate_until_undone(tmp_path):
+def intent(ref="m1", ticket=1, ops=(), run="r1", action="archive"):
+    return {"kind": "intent", "ref": ref, "ticket": ticket, "run": run, "action": action,
+            "ops": [list(op) for op in ops]}
+
+
+def test_intended_changes_accumulate_until_undone(tmp_path):
     ledger = Ledger(tmp_path / "l.jsonl", now=Clock())
+    ledger.append(intent(ops=[["unlabel", "SPAM"], ["label", "INBOX"]], action="rescue"))
     ledger.append(decision("m1", 1, applied=[["unlabel", "SPAM"], ["label", "INBOX"]]))
+    ledger.append(intent(ops=[["label", "Janitor/Receipts"], ["unlabel", "INBOX"]]))
     ledger.append(decision("m1", 1, applied=[["label", "Janitor/Receipts"],
                                              ["unlabel", "INBOX"]]))
     assert ledger.history("m1") == [["unlabel", "SPAM"], ["label", "INBOX"],
                                     ["label", "Janitor/Receipts"], ["unlabel", "INBOX"]]
     ledger.append({"kind": "undo", "ticket": 1, "ok": True})
     assert ledger.history("m1") == [] and ledger.is_final("m1") and ledger.undone("m1")
+
+
+def test_a_change_without_a_decision_is_still_in_the_history(tmp_path):
+    """The run died between the provider call and its decision row."""
+    ledger = Ledger(tmp_path / "l.jsonl", now=Clock())
+    ledger.append({"kind": "start", "ref": "m1", "ticket": 1})
+    ledger.append(intent(ops=[["trash"]], run="r7", action="trash"))
+    again = Ledger(tmp_path / "l.jsonl", now=Clock())
+    assert again.history("m1") == [["trash"]]
+    assert set(again.unconfirmed()) == {"m1"} and again.last_acting_run() == "r7"
+    again.append(decision("m1", 1, applied=[["trash"]]))
+    assert again.unconfirmed() == {} and again.history("m1") == [["trash"]]
 
 
 def test_keep_makes_a_message_final_without_undoing_it(tmp_path):

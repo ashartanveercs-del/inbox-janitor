@@ -181,10 +181,11 @@ def apply(cmd: Command, ctx: CommandContext) -> list[str]:
     if cmd.verb == "undo":
         return [_undo(ctx, t) for t in cmd.tickets]
     if cmd.verb == "undo_last":
-        run = ctx.state.get("last_acting_run")
+        # From the intent rows, which are written before each change: a run that died right
+        # after a change is still "the last run", with that change in it.
+        run = ctx.ledger.last_acting_run()
         tickets = sorted({row["ticket"] for row in ctx.ledger.rows
-                          if row.get("kind") == "decision" and row.get("run") == run
-                          and run and row.get("applied")
+                          if row.get("kind") == "intent" and run and row.get("run") == run
                           and not ctx.ledger.undone(row["ref"])})
         return [_undo(ctx, t) for t in tickets] or ["undo last run: nothing to undo"]
     if cmd.verb == "keep":

@@ -116,7 +116,11 @@ def ctx(tmp_path):
 
 
 def acted(ctx, m, ticket, applied, run="r1", outcome="done"):
+    """What a run leaves in the ledger: an intent ahead of each change, then the decision."""
     ctx.mailbox.add(m)
+    if applied:
+        ctx.ledger.append({"kind": "intent", "ref": m.ref, "ticket": ticket, "run": run,
+                           "action": "archive", "ops": applied})
     ctx.ledger.append({"kind": "decision", "ref": m.ref, "ticket": ticket, "run": run,
                        "outcome": outcome, "applied": applied})
 
@@ -158,6 +162,8 @@ def test_undo_of_an_unknown_ticket(ctx):
 
 
 def test_undo_of_a_message_that_is_gone_for_good(ctx):
+    ctx.ledger.append({"kind": "intent", "ref": "purged", "ticket": 8, "run": "r1",
+                       "action": "trash", "ops": [["trash"]]})
     ctx.ledger.append({"kind": "decision", "ref": "purged", "ticket": 8, "run": "r1",
                        "outcome": "done", "applied": [["trash"]]})
     assert "gone" in apply(Command("undo", tickets=(8,)), ctx)[0]
@@ -168,7 +174,6 @@ def test_undo_last_only_touches_the_last_run_that_changed_anything(ctx):
     older, newer = newsletter(labels=("Janitor/Newsletters",)), promotion(labels=("TRASH",))
     acted(ctx, older, 1, [["label", "Janitor/Newsletters"], ["unlabel", "INBOX"]], run="r1")
     acted(ctx, newer, 2, [["trash"]], run="r2")
-    ctx.state["last_acting_run"] = "r2"
     assert apply(Command("undo_last"), ctx) == ["undo #2: put back"]
     assert "INBOX" not in ctx.mailbox.fetch(older.ref).labels
 
