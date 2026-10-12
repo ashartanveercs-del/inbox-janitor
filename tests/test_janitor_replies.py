@@ -55,6 +55,37 @@ def test_a_reply_is_applied_once(tmp_path):
     assert w.run().notes == []
 
 
+def test_a_reply_that_hit_a_mailbox_error_is_applied_on_a_later_run(tmp_path):
+    """The digest promises "it will be tried again next run" - also when that run is hours
+    later, as with a daily cron."""
+    p = promotion()
+    w = World(tmp_path, p, stage=Stage.TRASH)
+    w.run()
+    assert "TRASH" in w.labels(p)
+    ref = w.reply("undo last")
+    w.clock.advance(hours=3)
+    w.mailbox.fail_fetch = {ref}                     # one 503 on reading the reply
+    assert "replies" in w.run().problems and "TRASH" in w.labels(p)
+    w.mailbox.fail_fetch = set()
+    w.clock.advance(hours=3)
+    w.run()
+    assert "INBOX" in w.labels(p) and "TRASH" not in w.labels(p)
+
+
+def test_the_reply_window_moves_on_once_every_reply_was_read(tmp_path):
+    n = newsletter()
+    w = World(tmp_path, n, stage=Stage.FILE)
+    w.run()
+    w.clock.advance(minutes=5)
+    w.mailbox.add(Message(ref="note1", sender=OWNER, subject="Lunch?", body="Noon works.",
+                          received=w.clock.now(), labels=frozenset({"SENT"})))
+    w.clock.advance(hours=3)
+    w.run()
+    w.clock.advance(hours=3)
+    w.run()
+    assert w.mailbox.fetched.count("note1") == 1    # read once, not on every run after
+
+
 def test_a_forged_reply_delivered_to_the_inbox_is_ignored(tmp_path):
     """Anyone can send mail with From: <the owner>. Only a message the account itself sent
     (the provider's SENT label) can carry a command."""

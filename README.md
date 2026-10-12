@@ -47,7 +47,7 @@ Your corrections:
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
 | **Crash-safe bookkeeping** | Append-only JSONL ledger with `start` and `decision` rows, atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 369 tests (261 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 371 tests (263 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
 
 ## How a run works
 
@@ -139,7 +139,9 @@ whatever the config says.
 applied: a label the owner had already set is not recorded, so undo won't strip it. Reversal
 restores every label to the opposite of the *first* change made to it, so a message that was
 rescued and then archived goes back to Spam. Undoing a suggestion means "leave it alone". Undo
-is idempotent, so a reply that failed halfway can safely be applied again from the top. Two runs
+is idempotent, so a reply that failed halfway can safely be applied again from the top, and the
+window that searches for replies only moves on once every reply in it was applied, so a failed
+one is still found by the next run however long the gap. Two runs
 in the same second get distinct ids, so `undo last` never reaches into the earlier one.
 
 **6. The digest is a command channel that quotes strangers.** Subjects are attacker-controlled,
@@ -302,9 +304,9 @@ called again until the next run; those messages wait. A runnable version is in
 ## Testing
 
 ```bash
-pytest                           # 369 tests, ~3 s, offline, no keys
+pytest                           # 371 tests, ~3 s, offline, no keys
 ruff check src tests examples tools
-python tools/mutation_check.py   # 24 guards: each one removed must turn its test red
+python tools/mutation_check.py   # 25 guards: each one removed must turn its test red
 ```
 
 [`tests/fakes.py`](tests/fakes.py) builds a `World`: an in-memory mailbox with Gmail's label

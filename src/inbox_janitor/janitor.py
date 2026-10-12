@@ -134,6 +134,7 @@ class Janitor:
             report.problem("replies")
             return
         ctx = CommandContext(self.mailbox, self.ledger, self.state, self.rules)
+        retry = False
         for ref in reversed(refs):
             key = self.fp("reply", ref)
             if ref in own or self.ledger.seen_reply(key):
@@ -150,6 +151,7 @@ class Janitor:
                     notes += apply(cmd, ctx)
             except MailboxError:
                 report.problem("replies")          # not marked seen: applied again next run
+                retry = True
                 continue
             if unknown:
                 notes.append("1 line in your reply wasn't understood" if len(unknown) == 1
@@ -158,7 +160,10 @@ class Janitor:
             self.ledger.append({"kind": "reply", "fp": key})
             self.state["pending_notes"] = report.notes        # survives a crash before sending
             self.state.save()
-        self.state["replies_checked"] = started.timestamp()
+        # The window only moves on once every reply in it was read and applied: a reply that
+        # failed must still be inside the next run's search, however much later that runs.
+        if not retry:
+            self.state["replies_checked"] = started.timestamp()
 
     # -- spam rescue ----------------------------------------------------------------------------
 

@@ -92,6 +92,8 @@ MUTATIONS = [
     (JANITOR, "return line if after is None else max(line, after)",
      "return line if after is None else after",
      "test_janitor_stages.py::test_the_config_cannot_move_the_backlog_line_earlier"),
+    (JANITOR, "        if not retry:", "        if True:",
+     "test_janitor_replies.py::test_a_reply_that_hit_a_mailbox_error_is_applied_on_a_later_run"),
 ]
 
 
