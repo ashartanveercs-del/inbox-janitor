@@ -276,12 +276,10 @@ class Janitor:
         fps = fingerprints(m, self.fp)
         prev = self.ledger.decision(ref) or {}
         wait_since = prev.get("wait_since") if prev.get("outcome") == "wait" else None
+        received = m.received.timestamp()
         reason = exemption(m, owners=self.owners, rules=self.rules)
-        original = None if reason else dups.original_of(ref, fps)
         if reason:
             verdict = Verdict("kept", reason=reason)
-        elif original is not None:
-            verdict = duplicate_verdict(original)
         else:
             answer = self.classifier.classify(m)
             if answer.error == "unavailable":
@@ -290,6 +288,12 @@ class Janitor:
                 self.now().timestamp() - wait_since > self.config.wait_days * DAY
             verdict = decide(answer, m, config=self.config, rules=self.rules,
                              waited_too_long=waited)
+            # Being a copy only changes how a message the policy acts on is acted on (it is
+            # archived as a copy); it never overrides keep, review or wait.
+            original = dups.original_of(ref, fps, received) if verdict.outcome == "act" \
+                else None
+            if original is not None:
+                verdict = duplicate_verdict(original, verdict)
 
         outcome, applied = verdict.outcome, []
         if outcome == "act":
@@ -304,7 +308,7 @@ class Janitor:
             row["wait_since"] = wait_since or round(self.now().timestamp(), 3)
         self.ledger.append(row)
         if ["trash"] not in applied:
-            dups.add(ticket, ref, fps)
+            dups.add(ticket, ref, fps, received)
         report.items.append(self._item(m, ticket, outcome, verdict))
 
     def _failed(self, ref: str, err: Exception, report: RunReport) -> None:

@@ -163,6 +163,47 @@ def test_a_duplicate_is_archived_under_its_own_label(tmp_path):
     assert f"copy of #{ticket}" in w.digests()[-1].body
 
 
+REMINDER = "Your statement is ready. Sign in to see the balance and the day it is due."
+
+
+def test_the_same_words_weeks_apart_are_two_messages_not_a_copy(tmp_path):
+    """A templated monthly notice keeps its wording; this month's is not last month's copy."""
+    statement = ScriptedClassifier({"Statement ready": Classification("invoice", 0.97, "x")})
+    last_month = msg(sender="billing@flour.example.com", subject="Statement ready",
+                     body=REMINDER, age_days=25)
+    w = World(tmp_path, last_month, stage=Stage.FILE, classifier=statement)
+    w.run()
+    this_month = msg(sender="billing@flour.example.com", subject="Statement ready",
+                     body=REMINDER, received=w.clock.now())
+    w.mailbox.add(this_month)
+    report = w.run()
+    assert w.labels(this_month) == {"INBOX", "UNREAD", "Janitor/Invoices"}
+    assert outcomes(report)[this_month.ref] == ("done", Action.LABEL)
+
+
+def test_a_resend_within_the_hour_is_still_archived_as_a_copy(tmp_path):
+    statement = ScriptedClassifier({"Statement ready": Classification("invoice", 0.97, "x")})
+    first = msg(sender="billing@flour.example.com", subject="Statement ready", body=REMINDER,
+                age_days=0.05)
+    resent = msg(sender="billing@flour.example.com", subject="Statement ready", body=REMINDER)
+    w = World(tmp_path, first, resent, stage=Stage.FILE, classifier=statement)
+    w.run()
+    assert w.labels(first) == {"INBOX", "UNREAD", "Janitor/Invoices"}
+    assert w.labels(resent) == {"UNREAD", "Janitor/Duplicates"}
+
+
+def test_a_copy_never_overrides_a_policy_that_keeps_the_mail(tmp_path):
+    """Personal mail is kept by policy; saying the same thing twice doesn't make it junk."""
+    words = "Call me when you get a minute, love. Nothing urgent, just want to chat."
+    chat = ScriptedClassifier({"Hi love": Classification("personal", 0.99, "x")})
+    first = msg(sender="mum@family.example.com", subject="Hi love", body=words, age_days=0.05)
+    again = msg(sender="mum@family.example.com", subject="Hi love", body=words)
+    w = World(tmp_path, first, again, stage=Stage.FILE, classifier=chat)
+    report = w.run()
+    assert w.changes() == []
+    assert {i.outcome for i in report.items} == {"kept"}
+
+
 def test_trash_is_capped_per_run_and_per_day(tmp_path):
     promos = [promotion(subject=f"Sale {n}: 20% off", body=f"Offer number {n}, limited time.")
               for n in range(5)]

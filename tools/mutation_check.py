@@ -99,6 +99,12 @@ MUTATIONS = [
      "test_cli.py::test_message_content_only_leaves_the_machine_over_https"),
     ("src/inbox_janitor/mailbox/gmail.py", "src = markup[:MAX_HTML_CHARS]", "src = markup",
      "test_gmail.py::test_only_the_start_of_a_huge_html_body_is_read"),
+    ("src/inbox_janitor/dedupe.py",
+     'if kind == "msgid" or abs(received - s.received) <= CONTENT_WINDOW]', "if True]",
+     "test_janitor_stages.py::test_the_same_words_weeks_apart_are_two_messages_not_a_copy"),
+    (JANITOR, 'original = dups.original_of(ref, fps, received) if verdict.outcome == "act"',
+     "original = dups.original_of(ref, fps, received) if True",
+     "test_janitor_stages.py::test_a_copy_never_overrides_a_policy_that_keeps_the_mail"),
 ]
 
 

@@ -39,9 +39,14 @@ def exemption(m: Message, *, owners: Collection[str], rules: UserRules | None) -
     return None
 
 
-def duplicate_verdict(original_ticket: int) -> Verdict:
-    """Deterministic (hash equality), so no confidence is involved; archiving is reversible."""
-    return Verdict("act", Action.ARCHIVE, f"duplicate_of_{original_ticket}", DUPLICATE_LABEL)
+def duplicate_verdict(original_ticket: int, acting: Verdict | None = None) -> Verdict:
+    """A copy of a message the policy acts on is archived as a copy instead: deterministic
+    (hash equality) and reversible. `acting` is the policy's verdict, kept for the record;
+    the caller only asks for a copy's verdict when the policy was going to act."""
+    seen = {} if acting is None else {"category": acting.category,
+                                      "confidence": acting.confidence, "source": acting.source}
+    return Verdict("act", Action.ARCHIVE, f"duplicate_of_{original_ticket}", DUPLICATE_LABEL,
+                   **seen)
 
 
 def decide(c: Classification, m: Message, *, config: Config, rules: UserRules | None,

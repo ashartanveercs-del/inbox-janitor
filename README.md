@@ -42,12 +42,12 @@ Your corrections:
 | **A confidence floor, not a vibe** | Acting needs ≥ 0.95. The config can raise the floor but not lower it (lower values are clamped, with a warning). Malformed answers (unknown category, NaN, `1.7`, `true`) are invalid and never guessed at. Anything below the floor is left untouched and listed for review. |
 | **Spam rescue that resists spoofing** | Trusted senders' mail leaves Spam only with a DMARC pass, or a DKIM pass aligned with From, in the topmost `Authentication-Results` header stamped by the mailbox's own server. The classifier never moves mail out of Spam. |
 | **Blast-radius limits** | Trash is capped per run and per day (hard ceilings in code), and the count is persisted *before* each API call. Mail that arrived before trashing was switched on is held back until the operator approves the exact count. |
-| **Duplicate detection** | Same Message-ID, or the same sender + body + attachment manifest. A matching subject alone never makes a duplicate, and a near-empty body never matches on content. |
+| **Duplicate detection** | Same Message-ID, or the same sender + body + attachment manifest within 48 hours (next month's identical reminder is a new message). A matching subject alone never makes a duplicate, a near-empty body never matches on content, and a copy never overrides a policy that keeps the mail. |
 | **Undo by reply** | `undo 3`, `undo last`, `keep 5`, `never trash newsletters from …`, `never touch …`, `trust …`, `pause`, `resume`. Every command reverses something, protects mail, or pauses and resumes the janitor. None can raise the stage, lower the floor or add a way to destroy mail. |
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
 | **Crash-safe bookkeeping** | Append-only JSONL ledger with `start` and `decision` rows, atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 401 tests (273 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 408 tests (280 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
 
 ## How a run works
 
@@ -70,14 +70,14 @@ Each inbox message goes through the same pipeline ([`janitor.py`](src/inbox_jani
 flowchart LR
     M[message] --> EX{"exempt?<br/>own mail, starred,<br/>never-touch rule"}
     EX -- yes --> KEEP[kept]
-    EX -- no --> DUP{duplicate?}
-    DUP -- yes --> COPY["archive as a copy<br/>of the original"]
-    DUP -- no --> CLS["classifier:<br/>category + confidence"]
+    EX -- no --> CLS["classifier:<br/>category + confidence"]
     CLS --> FLOOR{">= floor?"}
     FLOOR -- no --> REVIEW["review:<br/>untouched, reported"]
     FLOOR -- yes --> POLICY["operator policy:<br/>keep / label / archive / trash"]
     POLICY --> RULES["owner rules:<br/>never-trash turns trash into archive"]
-    RULES --> GATE{gate}
+    RULES --> DUP{"a copy? same Message-ID,<br/>or same content within 48 h"}
+    DUP -- yes --> COPY["archive as a copy<br/>of the original"]
+    DUP -- no --> GATE{gate}
     COPY --> GATE
     GATE -- "stage too low" --> SUG[suggested]
     GATE -- "trash, arrived before<br/>trash was on" --> BACK["backlog:<br/>needs --approve N"]
@@ -271,8 +271,9 @@ problem is reported at once.
 | `[classifier]` | `kind = "rules"` | `kind` (`rules`, `llm`, `rules+llm`) and `model`; never the endpoint or the key (see below) |
 
 Default policy: invoice, contract and support → **label**; receipt, newsletter and
-notification → **archive**; promotion → **trash**; personal and other → **keep**. Duplicates are
-archived under `Janitor/Duplicates`.
+notification → **archive**; promotion → **trash**; personal and other → **keep**. A copy of a
+message the policy acts on is archived under `Janitor/Duplicates` instead; a copy of mail the
+policy keeps is kept.
 
 Environment ([`.env.example`](.env.example)): `INBOX_JANITOR_STATE` (default `~/.inbox-janitor`),
 `INBOX_JANITOR_GMAIL_TOKEN`, and for a model `INBOX_JANITOR_LLM_KEY` and `INBOX_JANITOR_LLM_URL`
@@ -311,9 +312,9 @@ called again until the next run; those messages wait. A runnable version is in
 ## Testing
 
 ```bash
-pytest                           # 401 tests, ~3 s, offline, no keys
+pytest                           # 408 tests, ~3 s, offline, no keys
 ruff check src tests examples tools
-python tools/mutation_check.py   # 27 guards: each one removed must turn its test red
+python tools/mutation_check.py   # 29 guards: each one removed must turn its test red
 ```
 
 [`tests/fakes.py`](tests/fakes.py) builds a `World`: an in-memory mailbox with Gmail's label
