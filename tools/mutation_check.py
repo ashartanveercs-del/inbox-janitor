@@ -11,9 +11,9 @@ stale .pyc can never stand in for the edit), and restores the file - also on Ctr
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
+from importlib.util import cache_from_source
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -144,6 +144,15 @@ MUTATIONS = [
 def main() -> int:
     survivors = []
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    baseline = subprocess.run(
+        [sys.executable, "-B", "-m", "pytest", "-q",
+         *sorted({f"tests/{test}" for _, _, _, test in MUTATIONS})],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=600, check=False)
+    if baseline.returncode != 0:
+        print("ERROR: clean baseline failed; no mutations attempted")
+        print(baseline.stdout + baseline.stderr)
+        return 1
+    print("baseline passed: every selected test is green before mutation")
     for rel, old, new, test in MUTATIONS:
         path = ROOT / rel
         original = path.read_bytes()            # bytes: restore exactly, line endings included
@@ -154,15 +163,21 @@ def main() -> int:
             continue
         try:
             path.write_bytes(text.replace(old, new, 1).encode("utf-8"))
-            for cache in (ROOT / "src").rglob("__pycache__"):
-                shutil.rmtree(cache, ignore_errors=True)
+            # -B prevents writes, but does not disable reading an existing .pyc.
+            Path(cache_from_source(str(path))).unlink(missing_ok=True)
             result = subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x",
                                      f"tests/{test}"], cwd=ROOT, env=env, capture_output=True,
-                                    text=True, check=False)
+                                    text=True, timeout=600, check=False)
         finally:
             path.write_bytes(original)
-        killed = result.returncode != 0
-        print(("killed    " if killed else "SURVIVED  ") + test.split("::")[1])
+        failed = any(line.startswith(f"FAILED tests/{test}")
+                     for line in result.stdout.splitlines())
+        killed = result.returncode == 1 and failed
+        status = ("killed    " if killed else
+                  "SURVIVED  " if result.returncode == 0 else "ERROR     ")
+        print(status + test.split("::")[1])
+        if status == "ERROR     ":
+            print(f"          pytest exit {result.returncode}: no test-failure evidence")
         if not killed:
             survivors.append(test)
     print(f"\n{len(MUTATIONS) - len(survivors)}/{len(MUTATIONS)} mutations caught by their test")

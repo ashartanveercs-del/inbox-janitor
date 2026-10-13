@@ -1,14 +1,39 @@
 # inbox-janitor
 
-**An AI email janitor that earns its permissions instead of being handed them.** It triages a
-Gmail inbox on a schedule: it labels, archives, trashes junk and pulls legitimate mail out of
-Spam. But it starts in a suggest-only trial. Every destructive step is capped and can be
-reversed by replying `undo 3` to its digest. The permission ceiling lives in your crontab,
-where no model (and nothing a model can write) can reach it.
+**Start in trial. Earn permission to file. Put a hard ceiling on trash.**
 
+A Python Gmail triage tool with staged autonomy, measured classifier behavior and undo by
+reply. The operator's launch flag caps the stage; editable configuration can lower it, never
+raise it. Rules or an LLM return categories, while deterministic policy chooses actions.
+Trial reports suggestions; trusted, authenticated spam rescue still runs. Trash has persisted
+caps, an explicit backlog gate and a write-ahead record so interrupted changes remain undoable.
+
+[![CI](https://github.com/ashartanveercs-del/inbox-janitor/actions/workflows/ci.yml/badge.svg)](https://github.com/ashartanveercs-del/inbox-janitor/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-tzdata%20only-lightgrey)
+
+**38 guards mutation-checked · hash-only local records · real CLI, fictional mailbox demo**
+
+[Try it](#try-it-offline) · [Autonomy model](#how-a-run-works) ·
+[Classifier results](#measuring-a-classifier) · [Proof map](docs/PROOF_MAP.md) ·
+[Verification record](docs/VERIFICATION.md) · [Trust boundaries](#security-notes)
+
+## Try it offline
+
+From a checkout, with Python 3.11+. No Gmail account, API key or model required:
+
+```bash
+python -m pip install -e ".[dev]"
+python examples/demo.py
+python tools/eval_classifier.py
+```
+
+The demo drives the real CLI through trial, filing, an owner's correction and capped trash
+against a temporary JSON mailbox. The separate evaluation reports **51/57 correct answers at
+the confidence floor**, with no false trash on 108 synthetic messages. This is a regression
+corpus, not an accuracy claim about your inbox; the [full report](#measuring-a-classifier)
+includes errors and confidence bounds.
 
 ```text
 Subject: Inbox janitor (trash) - Wed Oct 14: 1 trashed
@@ -47,7 +72,7 @@ Your corrections:
 | **Privacy-preserving ledger** | Keyed BLAKE2b fingerprints, provider message ids, categories and outcome codes. No subjects, addresses, domains or bodies are written to disk, and even the owner's own rules are stored hashed. |
 | **Crash-safe bookkeeping** | Append-only JSONL ledger with `start`, `intent` and `decision` rows (every change is written down before it is made), atomic state writes, and tolerance for a torn final line. A message that crashes the process is given up on after three tries instead of blocking every run. |
 | **Pluggable classifier** | Ordered rules, an LLM behind any chat-completions endpoint, or both (cheap rules first, the model only when they're unsure). |
-| **Tested offline** | 436 tests (300 test functions) cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) breaks each guard and confirms its test fails. |
+| **Tested offline** | 443 test cases cover the Gmail adapter against scripted HTTP and the safety invariants end to end. [`tools/mutation_check.py`](tools/mutation_check.py) starts with a green baseline, then breaks each guard and requires an actual failing test. Platform skips and commands are listed in the [verification record](docs/VERIFICATION.md). |
 
 ## How a run works
 
@@ -375,7 +400,7 @@ hundred messages in the same JSON with a `label` each and run
 ## Testing
 
 ```bash
-pytest                           # 436 tests, ~3 s, offline, no keys
+pytest                           # offline, no keys; results in docs/VERIFICATION.md
 ruff check src tests examples tools
 python tools/mutation_check.py   # 38 guards: each one removed must turn its test red
 python tools/eval_classifier.py  # precision at the floor on eval/corpus.json
