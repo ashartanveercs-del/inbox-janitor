@@ -452,6 +452,11 @@ POSIX file-permission tests are skipped.
   0.99 for anything that maps to trash)
 - Re-evaluating review items after the owner changes the policy
 
+## Secret scanning
+
+[Full-history audit and secret-scan CI](docs/SECURITY-AUDIT.md). Configuration examples and
+synthetic fixtures were reviewed before publication; new credential findings fail the gate.
+
 ## License
 
 MIT

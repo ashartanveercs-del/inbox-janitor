@@ -5,6 +5,7 @@ import pytest
 from inbox_janitor.classify.rules import Rule
 from inbox_janitor.config import (
     CONFIDENCE_FLOOR,
+    DEFAULT_LABELS,
     DEFAULT_POLICY,
     MAX_TRASH_PER_DAY,
     Config,
@@ -30,6 +31,19 @@ def test_a_minimal_config_gets_safe_defaults():
     assert c.trash_per_run > 0 and c.trash_per_day >= c.trash_per_run
     assert c.timezone == "UTC"
     assert c.warnings == ()
+
+
+@pytest.mark.parametrize(("name", "defaults"), [
+    ("policy", DEFAULT_POLICY), ("labels", DEFAULT_LABELS),
+])
+def test_direct_configs_get_independent_read_only_defaults(name, defaults):
+    first, second = Config(owner=OWNER), Config(owner=OWNER)
+    first_mapping, second_mapping = getattr(first, name), getattr(second, name)
+    assert first_mapping == second_mapping == defaults
+    assert first_mapping is not second_mapping
+    with pytest.raises(TypeError):
+        first_mapping["personal"] = "TRASH"
+    assert second_mapping == defaults
 
 
 @pytest.mark.parametrize("owner", [None, "", "not-an-address", 7])

@@ -86,8 +86,10 @@ class Config:
     wait_days: int = 3
     keep_days: int = 180
     timezone: str = "UTC"
-    policy: Mapping[str, Action] = DEFAULT_POLICY
-    labels: Mapping[str, str] = DEFAULT_LABELS
+    policy: Mapping[str, Action] = field(
+        default_factory=lambda: MappingProxyType(dict(DEFAULT_POLICY)))
+    labels: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType(dict(DEFAULT_LABELS)))
     trusted_senders: tuple[str, ...] = ()
     rules: tuple[Rule, ...] = ()
     classifier: ClassifierConfig = field(default_factory=ClassifierConfig)
